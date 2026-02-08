@@ -175,7 +175,7 @@ const LIST_OFFERS_QUERY = `
 
 // ==================== API CLIENT ====================
 
-async function fetchGraphQL<T>(query: string, variables: Record<string, any>): Promise<T> {
+async function fetchGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const response = await fetch(GONDI_GRAPHQL_URL, {
     method: "POST",
     headers: {
@@ -231,7 +231,7 @@ export async function listOffers(params: ListOffersParams = {}): Promise<{
     onlyCollectionOffers,
   } = params;
 
-  const variables: Record<string, any> = {
+  const variables: Record<string, unknown> = {
     first: limit,
     sortBy: [{ field: "CREATED_DATE", order: "DESC" }],
   };
@@ -247,7 +247,10 @@ export async function listOffers(params: ListOffersParams = {}): Promise<{
   const data = await fetchGraphQL<ListOffersResponse>(LIST_OFFERS_QUERY, variables);
 
   return {
-    offers: data.listOffers.edges.map(edge => edge.node),
+    offers: data.listOffers.edges.map(edge => ({
+      ...edge.node,
+      status: normalizeStatus(edge.node.status),
+    })),
     totalCount: data.listOffers.totalCount,
     hasNextPage: data.listOffers.pageInfo.hasNextPage,
     cursor: data.listOffers.pageInfo.endCursor,
@@ -288,6 +291,20 @@ export async function getAllOffers(params: Omit<ListOffersParams, "cursor" | "li
 }
 
 // ==================== HELPERS ====================
+
+/**
+ * Normalize API status: "OrderStatus.Active" → "ACTIVE"
+ * The GraphQL API returns statuses prefixed with "OrderStatus."
+ * but our constants (and DB) use the short uppercase form.
+ */
+export function normalizeStatus(status: string): OfferStatus {
+  if (status.startsWith("OrderStatus.")) {
+    const short = status.replace("OrderStatus.", "").toUpperCase();
+    const valid = Object.values(OfferStatus) as string[];
+    if (valid.includes(short)) return short as OfferStatus;
+  }
+  return status as OfferStatus;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -545,10 +562,14 @@ async function main() {
 
     console.log(`\n✅ Total: ${offers.length} active offers found\n`);
 
-  } catch (error: any) {
-    console.error("❌ Error:", error.message);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("❌ Error:", msg);
     process.exit(1);
   }
 }
 
-main();
+const isStandalone = require.main === module;
+if (isStandalone) {
+  main();
+}

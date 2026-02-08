@@ -29,6 +29,32 @@ export interface CollectionStats {
 // ==================== CONFIG ====================
 
 const OPENSEA_API_BASE = "https://api.opensea.io/api/v2";
+const RATE_LIMIT_DELAY_MS = 350; // 350ms entre chaque requête (≈ 2.8 req/s, safe pour OpenSea)
+
+// ==================== RATE LIMITING ====================
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const MAX_RETRIES = 3;
+
+async function fetchWithRetry(url: string, headers: Record<string, string>): Promise<Response> {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const response = await fetch(url, { headers });
+
+    if (response.status === 429) {
+      const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+      console.warn(`[OpenSea] Rate limited (429), retrying in ${backoff / 1000}s...`);
+      await sleep(backoff);
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error("OpenSea API rate limit exceeded after retries");
+}
 
 // ==================== API OPENSEA ====================
 
@@ -40,14 +66,10 @@ async function fetchFloorPrice(
   apiKey: string
 ): Promise<number> {
   try {
-    const response = await fetch(
+    const headers = { "X-API-KEY": apiKey, "Accept": "application/json" };
+    const response = await fetchWithRetry(
       `${OPENSEA_API_BASE}/collections/${collectionSlug}/stats`,
-      {
-        headers: {
-          "X-API-KEY": apiKey,
-          "Accept": "application/json",
-        },
-      }
+      headers
     );
 
     if (!response.ok) {
@@ -56,8 +78,9 @@ async function fetchFloorPrice(
 
     const data = await response.json() as { total?: { floor_price?: number } };
     return data.total?.floor_price || 0;
-  } catch (error: any) {
-    console.error(`[OpenSea] Error fetching floor for ${collectionSlug}:`, error.message);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[OpenSea] Error fetching floor for ${collectionSlug}:`, msg);
     return 0;
   }
 }
@@ -70,15 +93,10 @@ async function fetchTopBid(
   apiKey: string
 ): Promise<number> {
   try {
-    // OpenSea v2 - récupère les offres sur la collection
-    const response = await fetch(
+    const headers = { "X-API-KEY": apiKey, "Accept": "application/json" };
+    const response = await fetchWithRetry(
       `${OPENSEA_API_BASE}/offers/collection/${collectionSlug}?limit=1`,
-      {
-        headers: {
-          "X-API-KEY": apiKey,
-          "Accept": "application/json",
-        },
-      }
+      headers
     );
 
     if (!response.ok) {
@@ -107,14 +125,16 @@ async function fetchTopBid(
     }
     
     return 0;
-  } catch (error: any) {
-    console.error(`[OpenSea] Error fetching bids for ${collectionSlug}:`, error.message);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[OpenSea] Error fetching bids for ${collectionSlug}:`, msg);
     return 0;
   }
 }
 
 /**
  * Récupère floor price et top bid depuis OpenSea
+ * Avec rate limiting automatique
  */
 async function fetchPricesFromOpenSea(
   collectionSlug: string,
@@ -124,7 +144,10 @@ async function fetchPricesFromOpenSea(
     fetchFloorPrice(collectionSlug, apiKey),
     fetchTopBid(collectionSlug, apiKey),
   ]);
-  
+
+  // Rate limiting: attendre avant la prochaine requête
+  await sleep(RATE_LIMIT_DELAY_MS);
+
   return { floor, topBid };
 }
 

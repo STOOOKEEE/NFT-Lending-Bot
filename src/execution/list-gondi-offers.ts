@@ -8,7 +8,7 @@
  */
 
 import "dotenv/config";
-import { Gondi } from "gondi";
+import { Gondi, OfferStatus } from "gondi";
 import { createWalletClient, http, formatEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
@@ -45,8 +45,9 @@ async function main() {
 
       const stats = await getOffersStats(account.address);
       console.log(`\n📈 ${stats.total} total | ${stats.active} active | ${stats.expired} expired | ${stats.cancelled} cancelled`);
-    } catch (e: any) {
-      console.warn("⚠️  DB:", e.message);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn("⚠️  DB:", msg);
     }
   }
 
@@ -57,23 +58,32 @@ async function main() {
     const gondi = new Gondi({ wallet });
 
     try {
-      const { edges } = await gondi.offers({ lenderAddress: account.address, statuses: ["ACTIVE"], first: 50 });
-      console.log(`\n✅ ${edges?.length || 0} offre(s) active(s):\n`);
+      const result = await gondi.offers({
+        filterBy: { lenders: [account.address], status: [OfferStatus.Active] },
+        limit: 50,
+      });
+      const offers = result.offers || [];
+      console.log(`\n✅ ${offers.length} offre(s) active(s):\n`);
 
-      for (const { node: o } of edges || []) {
+      for (const o of offers) {
         const eth = formatEther(BigInt(o.principalAmount));
         const apr = Number(o.aprBps) / 100;
         const days = Number(o.duration) / 86400;
-        console.log(`  📌 ${o.collection?.name || o.id.slice(0, 20)}... | ${eth} ETH | ${apr}% | ${days}j`);
+        console.log(`  📌 ${o.id.slice(0, 20)}... | ${eth} ETH | ${apr}% | ${days}j`);
       }
 
-      const all = await gondi.offers({ lenderAddress: account.address, first: 20 });
-      console.log(`\n📋 Historique (${all.edges?.length || 0}):`);
-      for (const { node: o } of all.edges || []) {
+      const all = await gondi.offers({
+        filterBy: { lenders: [account.address] },
+        limit: 20,
+      });
+      const allOffers = all.offers || [];
+      console.log(`\n📋 Historique (${allOffers.length}):`);
+      for (const o of allOffers) {
         console.log(`   ${o.status} | ${formatEther(BigInt(o.principalAmount))} ETH | ${o.id.slice(0, 30)}...`);
       }
-    } catch (e: any) {
-      console.error("❌ Gondi:", e.message);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("❌ Gondi:", msg);
     }
   }
 

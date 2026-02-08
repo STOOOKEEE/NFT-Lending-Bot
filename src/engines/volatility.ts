@@ -27,9 +27,9 @@ export function calculateDailyReturns(prices: DailyPrice[]): number[] {
     const prevPrice = prices[i - 1].price;
     const currPrice = prices[i].price;
     
-    if (prevPrice > 0) {
-      const dailyReturn = (currPrice - prevPrice) / prevPrice;
-      returns.push(dailyReturn);
+    if (prevPrice > 0 && currPrice > 0) {
+      const logReturn = Math.log(currPrice / prevPrice);
+      returns.push(logReturn);
     }
   }
   
@@ -178,8 +178,9 @@ export async function calculateVolatilityFromDb(
     }));
     
     return calculateAllVolatilities(prices);
-  } catch (error: any) {
-    console.error(`❌ Error calculating volatility for ${collectionSlug}:`, error.message);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error calculating volatility for ${collectionSlug}:`, msg);
     return {
       daily: 0,
       ewma: 0,

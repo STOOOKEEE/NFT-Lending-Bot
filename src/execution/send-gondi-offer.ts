@@ -20,7 +20,7 @@
  *   --apr <percent>        APR annuel en pourcentage (ex: 15 = 15%)
  *   --duration <days>      Durée du prêt en jours
  *   --capacity <eth>       Capacité totale (optionnel, défaut = amount)
- *   --expiration <days>    Expiration de l'offre en jours (défaut = 7)
+ *   --expiration <minutes> Expiration de l'offre en minutes (défaut = 35)
  *   --dry-run              Mode test sans envoi réel
  *   --skip-approval        Skip WETH approval check
  */
@@ -28,6 +28,9 @@
 import "dotenv/config";
 import { Gondi } from "gondi";
 import { createWalletClient, createPublicClient, http, parseEther, formatEther, Address } from "viem";
+
+type ViemPublicClient = ReturnType<typeof createPublicClient>;
+type ViemWalletClient = ReturnType<typeof createWalletClient>;
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import { addOffer, createOfferFromGondiResponse } from "../utils/lending-db";
@@ -77,7 +80,7 @@ const WETH_ABI = [
 ] as const;
 
 // Default values
-const DEFAULT_EXPIRATION_DAYS = 7;
+const DEFAULT_EXPIRATION_MINUTES = 35; // Expire vite, le bot re-publie toutes les 30 min
 const DEFAULT_FEE = 0n;
 
 // ==================== TYPES ====================
@@ -90,14 +93,14 @@ interface OfferParams {
   aprPercent: number;
   durationDays: number;
   capacityEth?: number;
-  expirationDays?: number;
+  expirationMinutes?: number;
   requiresLiquidation?: boolean;
   borrowerAddress?: string;
 }
 
 // ==================== HELPERS ====================
 
-async function checkWethBalance(publicClient: any, walletAddress: Address, requiredAmount: bigint): Promise<bigint> {
+async function checkWethBalance(publicClient: ViemPublicClient, walletAddress: Address, requiredAmount: bigint): Promise<bigint> {
   const balance = await publicClient.readContract({
     address: WETH_ADDRESS,
     abi: WETH_ABI,
@@ -116,8 +119,8 @@ async function checkWethBalance(publicClient: any, walletAddress: Address, requi
 }
 
 async function checkAndApproveWeth(
-  publicClient: any, 
-  walletClient: any,
+  publicClient: ViemPublicClient,
+  walletClient: ViemWalletClient,
   walletAddress: Address, 
   requiredAmount: bigint
 ): Promise<void> {
@@ -138,6 +141,8 @@ async function checkAndApproveWeth(
     const maxApproval = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     
     const hash = await walletClient.writeContract({
+      account: walletAddress,
+      chain: mainnet,
       address: WETH_ADDRESS,
       abi: WETH_ABI,
       functionName: "approve",
@@ -212,7 +217,7 @@ function parseArgs(): OfferParams & { dryRun: boolean; skipApproval: boolean } {
     aprPercent: parseFloat(aprStr),
     durationDays: parseInt(durationStr, 10),
     capacityEth: capacityStr ? parseFloat(capacityStr) : undefined,
-    expirationDays: expirationStr ? parseInt(expirationStr, 10) : DEFAULT_EXPIRATION_DAYS,
+    expirationMinutes: expirationStr ? parseInt(expirationStr, 10) : DEFAULT_EXPIRATION_MINUTES,
     requiresLiquidation,
     borrowerAddress,
     dryRun,
@@ -233,31 +238,17 @@ function daysToSeconds(days: number): bigint {
   return BigInt(days * 24 * 60 * 60);
 }
 
-function getExpirationTime(days: number): bigint {
+function getExpirationTime(minutes: number): bigint {
   const now = Math.floor(Date.now() / 1000);
-  return BigInt(now + days * 24 * 60 * 60);
-}
-
-// Arrondir un montant vers le bas au step le plus proche
-function roundToStep(value: bigint, step: bigint): bigint {
-  if (step === 0n) return value;
-  return (value / step) * step;
-}
-
-// Arrondir un montant vers le haut au step le plus proche
-function roundUpToStep(value: bigint, step: bigint): bigint {
-  if (step === 0n) return value;
-  const remainder = value % step;
-  if (remainder === 0n) return value;
-  return value + (step - remainder);
+  return BigInt(now + minutes * 60);
 }
 
 // ==================== GONDI CLIENT ====================
 
 interface GondiContext {
   gondi: Gondi;
-  walletClient: any;
-  publicClient: any;
+  walletClient: ViemWalletClient;
+  publicClient: ViemPublicClient;
   walletAddress: Address;
 }
 
@@ -304,7 +295,7 @@ async function sendCollectionOffer(
   skipApproval: boolean = false
 ): Promise<void> {
   const { gondi, publicClient, walletClient, walletAddress } = ctx;
-  const { collectionSlug, amountEth, aprPercent, durationDays, capacityEth, expirationDays, requiresLiquidation, borrowerAddress } = params;
+  const { collectionSlug, amountEth, aprPercent, durationDays, capacityEth, expirationMinutes, borrowerAddress } = params;
 
   console.log("\n📤 Création d'une Collection Offer...");
   console.log(`   Collection: ${collectionSlug}`);
@@ -312,7 +303,7 @@ async function sendCollectionOffer(
   console.log(`   APR: ${aprPercent}%`);
   console.log(`   Durée: ${durationDays} jours`);
   console.log(`   Capacité: ${capacityEth || amountEth} ETH`);
-  console.log(`   Expiration: ${expirationDays} jours`);
+  console.log(`   Expiration: ${expirationMinutes} minutes`);
 
   // Récupérer le collectionId - essayer d'abord par slug, puis par contractAddress
   let collectionId: number;
@@ -320,11 +311,14 @@ async function sendCollectionOffer(
   // Si c'est une adresse de contrat (commence par 0x)
   if (collectionSlug!.startsWith("0x")) {
     console.log(`   🔍 Recherche par contract address: ${collectionSlug}`);
-    const collectionIds = await gondi.collectionId({ 
-      contractAddress: collectionSlug as `0x${string}` 
+    const result = await gondi.collectionId({
+      contractAddress: collectionSlug as `0x${string}`
     });
-    
-    if (!collectionIds || collectionIds.length === 0) {
+
+    // Handle both number and array returns
+    const collectionIds = Array.isArray(result) ? result : [result];
+
+    if (!collectionIds || collectionIds.length === 0 || typeof collectionIds[0] !== 'number') {
       throw new Error(`Collection avec contrat '${collectionSlug}' non trouvée sur Gondi`);
     }
     collectionId = collectionIds[0];
@@ -332,9 +326,12 @@ async function sendCollectionOffer(
     // Sinon essayer par slug
     console.log(`   🔍 Recherche par slug: ${collectionSlug}`);
     try {
-      const collectionIds = await gondi.collectionId({ slug: collectionSlug! });
-      
-      if (!collectionIds || collectionIds.length === 0) {
+      const result = await gondi.collectionId({ slug: collectionSlug! });
+
+      // Handle both number and array returns
+      const collectionIds = Array.isArray(result) ? result : [result];
+
+      if (!collectionIds || collectionIds.length === 0 || typeof collectionIds[0] !== 'number') {
         throw new Error(`Collection '${collectionSlug}' non trouvée`);
       }
       collectionId = collectionIds[0];
@@ -368,8 +365,9 @@ async function sendCollectionOffer(
       }
       console.log(`   Collection Name: ${collectionName}`);
     }
-  } catch (err: any) {
-    console.log(`   ⚠️ Impossible de récupérer le nom de collection: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.log(`   ⚠️ Impossible de récupérer le nom de collection: ${errMsg}`);
   }
 
   // Récupérer les steps de la collection pour s'assurer de respecter les incréments
@@ -381,8 +379,9 @@ async function sendCollectionOffer(
     console.log(`   aprBpsStep: ${offerSteps.aprBpsStep} bps (minimum increment)`);
     console.log(`   origFeeBpsStep: ${offerSteps.origFeeBpsStep} bps`);
     if (offerSteps.usdcStep) console.log(`   usdcStep: ${offerSteps.usdcStep}`);
-  } catch (err: any) {
-    console.log(`   ⚠️ Impossible de récupérer les steps: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.log(`   ⚠️ Impossible de récupérer les steps: ${errMsg}`);
     offerSteps = null;
   }
 
@@ -392,26 +391,8 @@ async function sendCollectionOffer(
   let aprBps = aprPercentToBps(aprPercent);
   const durationSeconds = daysToSeconds(durationDays);
   
-  // Arrondir selon les steps si disponibles
-  if (offerSteps) {
-    const wethStep = BigInt(offerSteps.wethStep);
-    const aprStep = BigInt(offerSteps.aprBpsStep);
-    
-    // Arrondir le principal vers le haut au step le plus proche
-    const roundedPrincipal = roundUpToStep(principalWei, wethStep);
-    if (roundedPrincipal !== principalWei) {
-      console.log(`\n⚠️ Principal arrondi: ${formatEther(principalWei)} → ${formatEther(roundedPrincipal)} ETH (step: ${formatEther(wethStep)})`);
-      principalWei = roundedPrincipal;
-      capacityWei = roundedPrincipal; // Capacity = principal pour simplifier
-    }
-    
-    // Arrondir l'APR vers le haut au step le plus proche  
-    const roundedApr = roundUpToStep(aprBps, aprStep);
-    if (roundedApr !== aprBps) {
-      console.log(`⚠️ APR arrondi: ${aprBps} → ${roundedApr} bps (step: ${aprStep})`);
-      aprBps = roundedApr;
-    }
-  }
+  // Note: Steps are informational only, Gondi accepts smaller amounts
+  // No automatic rounding needed
   
   // Calcul du max repayment: principal * (1 + apr * duration / 365 days)
   // En basis points: principal * (10000 + aprBps * durationDays / 365) / 10000
@@ -425,7 +406,7 @@ async function sendCollectionOffer(
     capacity: capacityWei,
     fee: DEFAULT_FEE,
     aprBps,
-    expirationTime: getExpirationTime(expirationDays || DEFAULT_EXPIRATION_DAYS),
+    expirationTime: getExpirationTime(expirationMinutes || DEFAULT_EXPIRATION_MINUTES),
     duration: durationSeconds,
     requiresLiquidation: true,
     maxSeniorRepayment, // Ajout du champ requis
@@ -456,15 +437,13 @@ async function sendCollectionOffer(
     
     // Debug: afficher la réponse complète
     console.log("\n📋 Réponse complète de l'API:");
-    console.log(JSON.stringify(offer, (key, value) => 
+    console.log(JSON.stringify(offer, (_key, value) =>
       typeof value === 'bigint' ? value.toString() : value
     , 2));
     
     if (offer && offer.id) {
       console.log("\n✅ Offre créée avec succès!");
       console.log(`   Offer ID: ${offer.id}`);
-      console.log(`   Status: ${offer.status}`);
-      console.log(`   Created: ${offer.createdDate}`);
       
       // Sauvegarder dans la DB
       try {
@@ -475,19 +454,21 @@ async function sendCollectionOffer(
         });
         await addOffer(dbOffer);
         console.log(`   💾 Offre sauvegardée dans la DB`);
-      } catch (dbError: any) {
-        console.warn(`   ⚠️  Erreur sauvegarde DB: ${dbError.message}`);
+      } catch (dbError: unknown) {
+        const dbMsg = dbError instanceof Error ? dbError.message : String(dbError);
+        console.warn(`   ⚠️  Erreur sauvegarde DB: ${dbMsg}`);
       }
     } else {
       console.log("\n⚠️ Réponse inattendue - l'offre peut ne pas avoir été créée");
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Meilleure gestion de l'erreur
-    if (error?.message) {
+    if (error instanceof Error) {
       console.error("\n❌ Erreur Gondi:", error.message);
     }
-    if (error?.response?.errors) {
-      console.error("   Détails:", JSON.stringify(error.response.errors, null, 2));
+    const errorWithResponse = error as { response?: { errors?: unknown } };
+    if (errorWithResponse?.response?.errors) {
+      console.error("   Détails:", JSON.stringify(errorWithResponse.response.errors, null, 2));
     }
     // Log complet pour debug
     console.error("\n📋 Debug info:");
@@ -510,7 +491,7 @@ async function sendSingleNftOffer(
   skipApproval: boolean = false
 ): Promise<void> {
   const { gondi, publicClient, walletClient, walletAddress } = ctx;
-  const { nftSlug, tokenId, amountEth, aprPercent, durationDays, capacityEth, expirationDays, requiresLiquidation, borrowerAddress } = params;
+  const { nftSlug, tokenId, amountEth, aprPercent, durationDays, capacityEth, expirationMinutes, borrowerAddress } = params;
 
   console.log("\n📤 Création d'une Single NFT Offer...");
   console.log(`   Collection: ${nftSlug}`);
@@ -539,11 +520,11 @@ async function sendSingleNftOffer(
   try {
     // Récupérer le collectionId via le slug ou l'adresse
     if (nftSlug!.startsWith("0x")) {
-      const ids = await gondi.collectionId({ contractAddress: nftSlug as `0x${string}` });
-      collectionId = ids?.[0];
+      const result = await gondi.collectionId({ contractAddress: nftSlug as `0x${string}` });
+      collectionId = Array.isArray(result) ? result[0] : result;
     } else {
-      const ids = await gondi.collectionId({ slug: nftSlug! });
-      collectionId = ids?.[0];
+      const result = await gondi.collectionId({ slug: nftSlug! });
+      collectionId = Array.isArray(result) ? result[0] : result;
     }
     
     if (collectionId) {
@@ -557,23 +538,30 @@ async function sendSingleNftOffer(
         console.log(`   Collection Name: ${collectionName}`);
       }
     }
-  } catch (err: any) {
-    console.log(`   ⚠️ Impossible de récupérer les infos de collection: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.log(`   ⚠️ Impossible de récupérer les infos de collection: ${errMsg}`);
   }
 
   const capacityWei = ethToWei(capacityEth || amountEth);
+  const principalWei = ethToWei(amountEth);
+  const aprBps = aprPercentToBps(aprPercent);
+
+  // Calcul du max repayment: principal * (1 + apr * duration / 365 days)
+  const maxSeniorRepayment = (principalWei * (10000n + aprBps * BigInt(durationDays) / 365n)) / 10000n;
 
   // Paramètres de l'offre
   const offerParams = {
     nftId,
     principalAddress: WETH_ADDRESS as `0x${string}`,
-    principalAmount: ethToWei(amountEth),
+    principalAmount: principalWei,
     capacity: capacityWei,
     fee: DEFAULT_FEE,
-    aprBps: aprPercentToBps(aprPercent),
-    expirationTime: getExpirationTime(expirationDays || DEFAULT_EXPIRATION_DAYS),
+    aprBps,
+    expirationTime: getExpirationTime(expirationMinutes || DEFAULT_EXPIRATION_MINUTES),
     duration: daysToSeconds(durationDays),
-    requiresLiquidation: requiresLiquidation ?? true,
+    requiresLiquidation: true,
+    maxSeniorRepayment,
     ...(borrowerAddress && { borrowerAddress: borrowerAddress as `0x${string}` }),
   };
 
@@ -596,8 +584,7 @@ async function sendSingleNftOffer(
 
   console.log("\n✅ Offre créée avec succès!");
   console.log(`   Offer ID: ${offer.id}`);
-  console.log(`   Status: ${offer.status}`);
-  
+
   // Sauvegarder dans la DB
   try {
     const dbOffer = createOfferFromGondiResponse(offer, {
@@ -607,8 +594,9 @@ async function sendSingleNftOffer(
     });
     await addOffer(dbOffer);
     console.log(`   💾 Offre sauvegardée dans la DB`);
-  } catch (dbError: any) {
-    console.warn(`   ⚠️  Erreur sauvegarde DB: ${dbError.message}`);
+  } catch (dbError: unknown) {
+    const dbMsg = dbError instanceof Error ? dbError.message : String(dbError);
+    console.warn(`   ⚠️  Erreur sauvegarde DB: ${dbMsg}`);
   }
 }
 
@@ -630,7 +618,7 @@ async function main() {
     console.log(`   APR: ${params.aprPercent}%`);
     console.log(`   Duration: ${params.durationDays} days`);
     console.log(`   Capacity: ${params.capacityEth || params.amountEth} ETH`);
-    console.log(`   Expiration: ${params.expirationDays} days`);
+    console.log(`   Expiration: ${params.expirationMinutes} minutes`);
     return;
   }
 

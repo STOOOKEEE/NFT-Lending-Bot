@@ -2,11 +2,13 @@
   "name": "nft-lending-bot",
   "version": "1.0.0",
   "description": "Simple NFT lending bot for Ethereum",
-  "main": "dist/index.js",
+  "main": "dist/bot-auto.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "node dist/bot-auto.js",
+    "dev": "ts-node src/bot-auto.ts",
+    "bot": "ts-node src/bot-auto.ts",
+    "compact": "ts-node src/compact-price-history.ts",
     "lint": "eslint src --ext .ts"
   },
   "keywords": [
@@ -19,17 +21,12 @@
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.93.3",
-    "axios": "^1.6.0",
     "dotenv": "^16.3.1",
-    "ethers": "^6.9.0",
-    "node-cron": "^3.0.3",
-    "node-telegram-bot-api": "^0.64.0",
-    "winston": "^3.11.0"
+    "gondi": "^0.25.8",
+    "viem": "^2.45.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "@types/node-cron": "^3.0.11",
-    "@types/node-telegram-bot-api": "^0.64.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "eslint": "^8.55.0",

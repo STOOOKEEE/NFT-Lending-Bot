@@ -8,7 +8,7 @@
  */
 
 import "dotenv/config";
-import { calculateVolatilitiesFromDb } from "./engines/volatility";
+import { calculateVolatilitiesFromDb } from "../engines/volatility";
 
 const DEFAULT_COLLECTIONS = [
   "pudgypenguins",

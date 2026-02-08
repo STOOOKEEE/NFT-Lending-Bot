@@ -83,27 +83,20 @@ function getSupabaseClient(): SupabaseClient {
 // ==================== DATABASE OPERATIONS ====================
 
 /**
- * Supprime toutes les offres et insère les nouvelles
+ * Ajoute un nouveau snapshot des meilleures offres (garde l'historique)
+ * Note: N'efface plus les anciennes données, ajoute un nouveau snapshot avec timestamp
  */
 export async function replaceAllOffers(records: BestOfferRecord[]): Promise<{ success: number; failed: number }> {
   const client = getSupabaseClient();
 
-  // Supprimer toutes les anciennes offres
-  const { error: deleteError } = await client
-    .from("gondi_best_offers")
-    .delete()
-    .gte("id", 0);
+  const snapshotTime = new Date().toISOString();
 
-  if (deleteError) {
-    console.error("[DB] Delete error:", deleteError.message);
-  }
-
-  // Insérer les nouvelles
+  // Insérer les nouvelles offres avec snapshot_time
   const { error, data } = await client
     .from("gondi_best_offers")
     .insert(records.map(r => ({
       ...r,
-      updated_at: new Date().toISOString(),
+      snapshot_time: snapshotTime,
     })))
     .select();
 
@@ -116,13 +109,33 @@ export async function replaceAllOffers(records: BestOfferRecord[]): Promise<{ su
 }
 
 /**
- * Récupère toutes les offres
+ * Supprime les vieux snapshots (garde 1 snapshot par jour après N jours)
+ * Utilise la fonction SQL compact_gondi_snapshots()
+ */
+export async function compactGondiSnapshots(keepDays: number = 7): Promise<number> {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client.rpc("compact_gondi_snapshots", {
+    keep_days: keepDays,
+  });
+
+  if (error) {
+    console.error("[DB] Compact error:", error.message);
+    return 0;
+  }
+
+  return data || 0;
+}
+
+/**
+ * Récupère toutes les DERNIÈRES offres (utilise la view pour backward compatibility)
+ * Retourne le dernier snapshot pour chaque collection + duration
  */
 export async function getAllOffers(): Promise<BestOfferRecord[]> {
   const client = getSupabaseClient();
-  
+
   const { data, error } = await client
-    .from("gondi_best_offers")
+    .from("gondi_best_offers_latest")
     .select("*")
     .order("collection_name", { ascending: true })
     .order("duration_days", { ascending: true });
@@ -136,19 +149,44 @@ export async function getAllOffers(): Promise<BestOfferRecord[]> {
 }
 
 /**
- * Récupère les offres pour une collection
+ * Récupère les DERNIÈRES offres pour une collection
+ * Retourne le dernier snapshot pour cette collection
  */
 export async function getOffersByCollection(slug: string): Promise<BestOfferRecord[]> {
   const client = getSupabaseClient();
-  
+
   const { data, error } = await client
-    .from("gondi_best_offers")
+    .from("gondi_best_offers_latest")
     .select("*")
     .eq("collection_slug", slug)
     .order("duration_days", { ascending: true });
 
   if (error) {
     console.error("[DB] Fetch error:", error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+/**
+ * Récupère l'historique des APR pour une collection + durée spécifique
+ */
+export async function getAprHistory(
+  slug: string,
+  durationDays: number,
+  daysBack: number = 30
+): Promise<Array<{ snapshot_time: string; best_apr: number }>> {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client.rpc("get_apr_history", {
+    p_collection_slug: slug,
+    p_duration_days: durationDays,
+    p_days_back: daysBack,
+  });
+
+  if (error) {
+    console.error("[DB] APR history error:", error.message);
     return [];
   }
 
@@ -176,17 +214,17 @@ export async function getOffersByDuration(durationDays: number): Promise<BestOff
 }
 
 /**
- * Statistiques
+ * Statistiques (basées sur le dernier snapshot)
  */
-export async function getStats(): Promise<{ 
-  total: number; 
-  collections: number; 
+export async function getStats(): Promise<{
+  total: number;
+  collections: number;
   durations: number[];
 }> {
   const client = getSupabaseClient();
-  
+
   const { data, error } = await client
-    .from("gondi_best_offers")
+    .from("gondi_best_offers_latest")
     .select("collection_slug, duration_days");
 
   if (error || !data) {

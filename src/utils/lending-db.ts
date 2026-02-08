@@ -389,8 +389,30 @@ export async function getExpiringOffers(
 
 // ==================== HELPER: Create offer from Gondi response ====================
 
+interface GondiOfferResponse {
+  id: string;
+  offerId?: bigint | string | number;
+  contractAddress?: string;
+  lenderAddress?: string;
+  principalAmount?: bigint | string | number;
+  capacity?: bigint | string | number;
+  aprBps?: bigint | number | string;
+  duration?: bigint | number | string;
+  expirationTime?: bigint | number | string;
+  fee?: bigint | string | number;
+  maxSeniorRepayment?: bigint | string | number | null;
+  requiresLiquidation?: boolean | null;
+  borrowerAddress?: string;
+  nftCollateralAddress?: string;
+  nftCollateralTokenId?: bigint | string;
+  collectionId?: number;
+  principalAddress?: string;
+  offerHash?: string;
+  signature?: string;
+}
+
 export function createOfferFromGondiResponse(
-  gondiResponse: any,
+  gondiResponse: GondiOfferResponse,
   collectionInfo?: { id?: number; address?: string; name?: string }
 ): LendingOffer {
   const principalWei = gondiResponse.principalAmount?.toString() || "0";
@@ -403,14 +425,16 @@ export function createOfferFromGondiResponse(
   return {
     id: gondiResponse.id,
     marketplace: "gondi",
-    offer_id: gondiResponse.offerId?.toString() || gondiResponse.id.split(".").pop(),
-    contract_address: gondiResponse.contractAddress?.toLowerCase(),
-    lender_address: gondiResponse.lenderAddress?.toLowerCase(),
+    offer_id: gondiResponse.offerId?.toString() || gondiResponse.id.split(".").pop() || "",
+    contract_address: gondiResponse.contractAddress?.toLowerCase() || "",
+    lender_address: gondiResponse.lenderAddress?.toLowerCase() || "",
     
     collection_id: collectionInfo?.id || gondiResponse.collectionId,
     collection_address: collectionInfo?.address || gondiResponse.nftCollateralAddress?.toLowerCase(),
     collection_name: collectionInfo?.name,
-    token_id: gondiResponse.nftCollateralTokenId !== "0" ? gondiResponse.nftCollateralTokenId : undefined,
+    token_id: gondiResponse.nftCollateralTokenId && gondiResponse.nftCollateralTokenId.toString() !== "0"
+      ? gondiResponse.nftCollateralTokenId.toString()
+      : undefined,
     
     principal_amount: principalWei,
     principal_eth: principalEth,

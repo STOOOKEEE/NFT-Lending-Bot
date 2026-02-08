@@ -27,7 +27,7 @@ const getArg = (name: string): string | undefined => {
 const hasFlag = (name: string) => process.argv.includes(`--${name}`);
 
 function parseFullId(id: string) {
-  const [contract, lender, offerId] = id.split(".");
+  const [contract, , offerId] = id.split(".");
   return offerId ? { contract: contract as Address, offerId: BigInt(offerId) } : null;
 }
 

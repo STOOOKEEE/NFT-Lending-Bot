@@ -78,11 +78,9 @@ export async function savePriceToDb(price: PriceRecord): Promise<void> {
     if (error) {
       console.error(`[DB] Error saving price for ${price.collection_slug}:`, error.message);
     }
-  } catch (err: any) {
-    console.error(`[DB] Connection error for ${price.collection_slug}:`, err.message);
-    if (err.cause) {
-      console.error(`[DB] Cause:`, err.cause.message || err.cause);
-    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[DB] Connection error for ${price.collection_slug}:`, message);
   }
 }
 
@@ -111,6 +109,36 @@ export async function getPriceHistory(
   }
 
   return data || [];
+}
+
+/**
+ * Récupère le dernier prix enregistré pour une collection
+ */
+export async function getLatestFloorPrice(
+  collectionSlug: string
+): Promise<{ floor: number; bid: number; mid: number } | null> {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client
+    .from("price_history")
+    .select("floor_price, top_bid, mid_price")
+    .eq("collection_slug", collectionSlug)
+    .order("timestamp", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (error) {
+    console.error(`[DB] Error fetching latest price for ${collectionSlug}:`, error.message);
+    return null;
+  }
+
+  if (!data) return null;
+
+  return {
+    floor: data.floor_price,
+    bid: data.top_bid,
+    mid: data.mid_price,
+  };
 }
 
 /**
