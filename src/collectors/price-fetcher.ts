@@ -29,7 +29,7 @@ export interface CollectionStats {
 // ==================== CONFIG ====================
 
 const OPENSEA_API_BASE = "https://api.opensea.io/api/v2";
-const RATE_LIMIT_DELAY_MS = 350; // 350ms entre chaque requête (≈ 2.8 req/s, safe pour OpenSea)
+const RATE_LIMIT_DELAY_MS = 5000; // 5s entre chaque requête (0.2 req/s)
 
 // ==================== RATE LIMITING ====================
 
@@ -45,8 +45,9 @@ async function fetchWithRetry(url: string, headers: Record<string, string>): Pro
 
     if (response.status === 429) {
       const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
-      console.warn(`[OpenSea] Rate limited (429), retrying in ${backoff / 1000}s...`);
-      await sleep(backoff);
+      const totalWait = backoff + RATE_LIMIT_DELAY_MS; // backoff + respect global rate limit
+      console.warn(`[OpenSea] Rate limited (429), retrying in ${totalWait / 1000}s...`);
+      await sleep(totalWait);
       continue;
     }
 
@@ -86,16 +87,36 @@ async function fetchFloorPrice(
 }
 
 /**
- * Récupère le top bid (meilleure offre) via OpenSea API v2
+ * Récupère le top bid (meilleure offre collection-wide) via OpenSea API v2
+ *
+ * Endpoint: GET /api/v2/offers/collection/{slug}
+ * Utilise le champ `price` (value/currency/decimals) et `criteria.trait`
+ * pour filtrer les trait offers et calculer le prix par unité.
  */
+
+interface OpenSeaOffer {
+  price: {
+    currency: string;
+    decimals: number;
+    value: string;
+  };
+  remaining_quantity: number;
+  status: string;
+  criteria: {
+    collection: { slug: string };
+    trait: { type: string; value: string } | null;
+  };
+}
+
 async function fetchTopBid(
   collectionSlug: string,
-  apiKey: string
+  apiKey: string,
+  floorPrice?: number
 ): Promise<number> {
   try {
     const headers = { "X-API-KEY": apiKey, "Accept": "application/json" };
     const response = await fetchWithRetry(
-      `${OPENSEA_API_BASE}/offers/collection/${collectionSlug}?limit=1`,
+      `${OPENSEA_API_BASE}/offers/collection/${collectionSlug}?limit=10`,
       headers
     );
 
@@ -104,27 +125,32 @@ async function fetchTopBid(
       return 0;
     }
 
-    const data = await response.json() as { 
-      offers?: Array<{ 
-        protocol_data?: { 
-          parameters?: { 
-            offer?: Array<{ 
-              startAmount?: string;
-            }> 
-          } 
-        } 
-      }> 
-    };
-    
-    const topOffer = data.offers?.[0];
-    const amountWei = topOffer?.protocol_data?.parameters?.offer?.[0]?.startAmount;
-    
-    if (amountWei) {
-      // Convertir de wei (18 decimals) en ETH
-      return parseFloat(amountWei) / 1e18;
+    const data = await response.json() as { offers?: OpenSeaOffer[] };
+    const offers = data.offers || [];
+
+    let bestBid = 0;
+
+    for (const offer of offers) {
+      // Only WETH/ETH offers
+      if (offer.price.currency !== "WETH" && offer.price.currency !== "ETH") continue;
+
+      // Skip trait offers (they target rarer items, price is higher than floor)
+      if (offer.criteria?.trait !== null) continue;
+
+      // Per-unit price = total value / quantity
+      const totalValue = parseFloat(offer.price.value) / Math.pow(10, offer.price.decimals);
+      const quantity = offer.remaining_quantity || 1;
+      const perUnit = totalValue / quantity;
+
+      // Skip bids above floor price (unfunded offers not filtered by API)
+      if (floorPrice && floorPrice > 0 && perUnit > floorPrice) continue;
+
+      if (perUnit > bestBid) {
+        bestBid = perUnit;
+      }
     }
-    
-    return 0;
+
+    return bestBid;
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[OpenSea] Error fetching bids for ${collectionSlug}:`, msg);
@@ -140,10 +166,10 @@ async function fetchPricesFromOpenSea(
   collectionSlug: string,
   apiKey: string
 ): Promise<{ floor: number; topBid: number }> {
-  const [floor, topBid] = await Promise.all([
-    fetchFloorPrice(collectionSlug, apiKey),
-    fetchTopBid(collectionSlug, apiKey),
-  ]);
+  // Floor first, then bid (bid needs floor to filter unfunded offers)
+  const floor = await fetchFloorPrice(collectionSlug, apiKey);
+  await sleep(RATE_LIMIT_DELAY_MS);
+  const topBid = await fetchTopBid(collectionSlug, apiKey, floor);
 
   // Rate limiting: attendre avant la prochaine requête
   await sleep(RATE_LIMIT_DELAY_MS);

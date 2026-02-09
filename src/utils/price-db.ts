@@ -125,7 +125,7 @@ export async function getLatestFloorPrice(
     .eq("collection_slug", collectionSlug)
     .order("timestamp", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error(`[DB] Error fetching latest price for ${collectionSlug}:`, error.message);

@@ -35,8 +35,8 @@ const execAsync = promisify(exec);
 
 // ==================== CONFIGURATION ====================
 
-/** Collecte des prix indépendante (10 min) */
-const PRICE_COLLECTION_INTERVAL = 10 * 60 * 1000;
+/** Collecte des prix indépendante (30 min) - reduced from 10 to avoid OpenSea rate limits after 8+ hours */
+const PRICE_COLLECTION_INTERVAL = 30 * 60 * 1000;
 
 /** Intervalle du cycle principal: sync + tracking + stratégie (30 min) */
 const MAIN_CYCLE_INTERVAL = 30 * 60 * 1000;
@@ -146,12 +146,27 @@ async function sendTelegramMessage(message: string): Promise<void> {
 // ==================== STEP 1: PRICE COLLECTION ====================
 
 async function collectPrices(): Promise<void> {
-  log("📊", "Collecting prices...");
+  log("📊", `Collecting prices for ${COLLECTIONS.length} collections...`);
   const priceAlerts: string[] = [];
+  const startTime = Date.now();
+  let successCount = 0;
+  let errorCount = 0;
 
   for (const col of COLLECTIONS) {
     try {
+      const collStartTime = Date.now();
       const price = await priceFetcher.fetchPrice(col.slug);
+      const collDuration = Date.now() - collStartTime;
+
+      // Skip invalid prices (floor = 0 is an error from OpenSea)
+      if (price.floorPrice <= 0) {
+        log("⚠️ ", `${col.slug}: invalid floor price (${price.floorPrice}), skipping`);
+        errorCount++;
+        continue;
+      }
+
+      successCount++;
+      log("✅", `${col.slug}: ${collDuration}ms (floor=${price.floorPrice.toFixed(4)}, bid=${price.topBid.toFixed(4)})`);
 
       await savePriceToDb({
         collection_slug: col.slug,
@@ -182,10 +197,14 @@ async function collectPrices(): Promise<void> {
 
       await sleep(300);
     } catch (error: unknown) {
+      errorCount++;
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`  ❌ ${col.name}: ${msg}`);
+      log("❌", `${col.name}: ${msg}`);
     }
   }
+
+  const totalDuration = Date.now() - startTime;
+  log("✅", `Price collection completed: ${successCount}/${COLLECTIONS.length} (${errorCount} errors) in ${(totalDuration / 1000).toFixed(1)}s`);
 
   // Alerter sur les mouvements significatifs
   if (priceAlerts.length > 0) {
@@ -194,8 +213,6 @@ async function collectPrices(): Promise<void> {
       `<b>🚨 PRICE ALERT</b>\n${priceAlerts.join("\n")}`
     );
   }
-
-  log("✅", "Price collection completed");
 }
 
 // ==================== STEP 2: GONDI SYNC ====================

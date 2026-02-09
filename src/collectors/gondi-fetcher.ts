@@ -281,8 +281,9 @@ export async function getAllOffers(params: Omit<ListOffersParams, "cursor" | "li
     await sleep(100);
 
     // Limite pour éviter de tout récupérer (les offres peuvent être très nombreuses)
-    if (allOffers.length >= 5000) {
-      console.log("  ⚠️ Limiting to 5000 offers for performance");
+    // Set a high limit to fetch all offers (Gondi has max ~50k active offers)
+    if (allOffers.length >= 50000) {
+      console.log("  ⚠️ Limiting to 50000 offers for memory");
       break;
     }
   }
