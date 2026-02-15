@@ -72,7 +72,7 @@ Options: --hide (masquer sans tx), --dry-run (test)`);
         const result = await gondi.cancelAllOffers({ minId: BigInt(minId || 0), contractAddress: contractAddr });
         if (result?.waitTxInBlock) await result.waitTxInBlock();
         console.log("✅ Toutes les offres annulées!");
-        try { await removeAllOffers(address, "gondi"); } catch {}
+        try { await removeAllOffers(address, "gondi"); } catch (e: unknown) { console.warn("DB cleanup failed:", e instanceof Error ? e.message : String(e)); }
       }
       return;
     }
@@ -97,18 +97,18 @@ Options: --hide (masquer sans tx), --dry-run (test)`);
       if (hide) {
         await gondi.hideOffer({ id: oid, contractAddress: contractAddr });
         console.log("✅ Offre masquée!");
-        try { await updateOfferStatus(fullId, "HIDDEN"); } catch {}
+        try { await updateOfferStatus(fullId, "HIDDEN"); } catch (e: unknown) { console.warn("DB update failed:", e instanceof Error ? e.message : String(e)); }
       } else {
         const result = await gondi.cancelOffer({ id: oid, contractAddress: contractAddr });
         if (result?.waitTxInBlock) await result.waitTxInBlock();
         console.log("✅ Offre annulée!");
-        try { await removeOffer(fullId); } catch {}
+        try { await removeOffer(fullId); } catch (e: unknown) { console.warn("DB remove failed:", e instanceof Error ? e.message : String(e)); }
       }
     }
 
     console.log("\n✅ Terminé!");
-  } catch (e: any) {
-    console.error("❌ Erreur:", e.message);
+  } catch (e: unknown) {
+    console.error("❌ Erreur:", e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
 }

@@ -9,6 +9,7 @@
  */
 
 import { sendRateLimitAlert } from "../utils/telegram";
+import { sleep } from "../utils/helpers";
 
 // ==================== TYPES ====================
 
@@ -34,10 +35,6 @@ const OPENSEA_API_BASE = "https://api.opensea.io/api/v2";
 const RATE_LIMIT_DELAY_MS = 5000; // 5s entre chaque requête (0.2 req/s)
 
 // ==================== RATE LIMITING ====================
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 const MAX_RETRIES = 3;
 

@@ -14,6 +14,7 @@
  */
 
 import { ethers } from "ethers";
+import { sleep } from "../utils/helpers";
 
 // ==================== CONFIG ====================
 
@@ -21,10 +22,6 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
 const BLUR_HOST = "blur.p.rapidapi.com";
 const RATE_LIMIT_DELAY = 600;
 const BLUR_POOL_ADDRESS = "0x0000000000A39bb272e79075ade125fd351887Ac";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 // ==================== TYPES ====================
 

@@ -10,6 +10,7 @@
  */
 
 import "dotenv/config";
+import { sleep } from "../utils/helpers";
 
 // ==================== CONFIG ====================
 
@@ -307,10 +308,6 @@ export function normalizeStatus(status: string): OfferStatus {
   return status as OfferStatus;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function formatAmount(amount: string, decimals: number): string {
   const value = parseFloat(amount) / Math.pow(10, decimals);
   return value.toFixed(4);
@@ -459,8 +456,8 @@ export function displayOffers(offers: Offer[]): void {
       parseFloat(o.principalAmount) / Math.pow(10, o.currency.decimals)
     ));
     
-    // Convertir en ETH approximatif pour le tri (USDC ~= 0.0003 ETH)
-    const ethEquivalent = currency === "USDC" ? maxPrincipal * 0.0003 : maxPrincipal;
+    // Approximate ETH conversion for display sorting only (not used in pricing)
+    const ethEquivalent = currency === "USDC" ? maxPrincipal / 3000 : maxPrincipal;
     
     if (!collectionBest.has(collection)) {
       collectionBest.set(collection, { maxPrincipalETH: 0, offers: [] });
@@ -478,8 +475,8 @@ export function displayOffers(offers: Offer[]): void {
   for (const [collection, data] of sortedCollections) {
     // Afficher la meilleure devise (principal le plus élevé en ETH equivalent)
     const bestOffer = data.offers.sort((a, b) => {
-      const aETH = a.currency === "USDC" ? a.maxPrincipal * 0.0003 : a.maxPrincipal;
-      const bETH = b.currency === "USDC" ? b.maxPrincipal * 0.0003 : b.maxPrincipal;
+      const aETH = a.currency === "USDC" ? a.maxPrincipal / 3000 : a.maxPrincipal;
+      const bETH = b.currency === "USDC" ? b.maxPrincipal / 3000 : b.maxPrincipal;
       return bETH - aETH;
     })[0];
     

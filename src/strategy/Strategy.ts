@@ -30,6 +30,7 @@ import {
   type PricingConfig,
   DEFAULT_CONFIG,
 } from "../engines/LoanPricer";
+import { getEthUsdPrice, toETHEquivalent } from "../utils/helpers";
 
 // ==================== TYPES ====================
 
@@ -77,39 +78,6 @@ const MIN_VOLATILITY_DATA_DAYS = 3;
 
 /** APR max 80% — safety cap */
 const MAX_APR_CAP = 0.8;
-
-// ==================== ETH PRICE ====================
-
-let cachedEthPrice: number | null = null;
-let ethPriceFetchedAt = 0;
-const ETH_PRICE_CACHE_MS = 10 * 60 * 1000;
-
-async function getEthUsdPrice(): Promise<number> {
-  const now = Date.now();
-  if (cachedEthPrice && now - ethPriceFetchedAt < ETH_PRICE_CACHE_MS) {
-    return cachedEthPrice;
-  }
-  try {
-    const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
-    const data = await res.json() as { ethereum?: { usd?: number } };
-    const price = data?.ethereum?.usd;
-    if (price && price > 0) {
-      cachedEthPrice = price;
-      ethPriceFetchedAt = now;
-      return price;
-    }
-  } catch {
-    // Fallback silencieux
-  }
-  return cachedEthPrice || 2500;
-}
-
-function toETHEquivalent(amount: number, currency: string, ethUsdPrice: number): number {
-  if (currency === "USDC" || currency === "HUSDC") {
-    return amount / ethUsdPrice;
-  }
-  return amount;
-}
 
 // ==================== ANALYSE D'UNE COLLECTION ====================
 

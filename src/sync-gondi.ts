@@ -13,23 +13,13 @@
 import "dotenv/config";
 import { getAllOffers as fetchAllOffers, Offer, OfferStatus } from "./collectors/gondi-fetcher";
 import { replaceAllOffers, getStats, BestOfferRecord } from "./utils/gondi-db";
+import { getDurationBucket, toETHEquivalent, getEthUsdPrice } from "./utils/helpers";
 
 // ==================== CONFIG ====================
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-// Buckets de durée en jours
-const DURATION_BUCKETS = [5, 7, 10, 15, 30, 60, 90, 120];
-
 // ==================== HELPERS ====================
-
-function getDurationBucket(durationDays: number): number {
-  // Trouve le bucket de durée le plus proche (arrondi vers le haut)
-  for (const bucket of DURATION_BUCKETS) {
-    if (durationDays <= bucket) return bucket;
-  }
-  return DURATION_BUCKETS[DURATION_BUCKETS.length - 1];
-}
 
 function timestampToISODate(timestamp: string): string {
   const num = parseInt(timestamp);
@@ -39,17 +29,10 @@ function timestampToISODate(timestamp: string): string {
   return new Date(timestamp).toISOString();
 }
 
-// Convertir en valeur ETH équivalente pour comparaison
-function toETHEquivalent(amount: number, currency: string): number {
-  if (currency === "USDC" || currency === "HUSDC") {
-    return amount / 3000; // ~3000 USDC = 1 ETH
-  }
-  return amount;
-}
-
 // ==================== MAIN LOGIC ====================
 
-function findBestOffersPerCollectionDuration(offers: Offer[]): BestOfferRecord[] {
+async function findBestOffersPerCollectionDuration(offers: Offer[]): Promise<BestOfferRecord[]> {
+  const ethUsdPrice = await getEthUsdPrice();
   const collectionOffers = offers.filter(o => o.collection && !o.nft);
   
   // Grouper par collection + duration bucket
@@ -81,7 +64,7 @@ function findBestOffersPerCollectionDuration(offers: Offer[]): BestOfferRecord[]
 
     for (const offer of groupOffers) {
       const principal = parseFloat(offer.principalAmount) / Math.pow(10, offer.currency.decimals);
-      const principalETH = toETHEquivalent(principal, offer.currency.symbol);
+      const principalETH = toETHEquivalent(principal, offer.currency.symbol, ethUsdPrice);
       const apr = parseInt(offer.aprBps) / 100;
 
       // Best Principal
@@ -189,7 +172,7 @@ async function syncOffers(): Promise<void> {
 
     // 2. Trouver les meilleures par collection + durée
     console.log("🎯 Finding best offers per collection & duration...");
-    const bestOffers = findBestOffersPerCollectionDuration(offers);
+    const bestOffers = await findBestOffersPerCollectionDuration(offers);
     console.log(`   Records: ${bestOffers.length} (collection × duration combinations)\n`);
 
     // 3. Afficher les résultats
@@ -210,8 +193,8 @@ async function syncOffers(): Promise<void> {
 
     console.log("\n✅ Sync completed!\n");
 
-  } catch (error: any) {
-    console.error("❌ Sync failed:", error.message);
+  } catch (error: unknown) {
+    console.error("❌ Sync failed:", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -225,7 +208,7 @@ async function main() {
   console.log("=".repeat(50));
   console.log(`📅 Started: ${new Date().toLocaleString()}`);
   console.log(`📋 Format: Best Principal + Best APR per Duration`);
-  console.log(`⏱️  Durations: ${DURATION_BUCKETS.map(d => `${d}d`).join(", ")}`);
+  console.log(`⏱️  Durations: 5d, 7d, 10d, 15d, 30d, 60d, 90d, 120d`);
   if (loopMode) console.log(`🔄 Loop Mode: every ${SYNC_INTERVAL_MS / 60000} minutes`);
   console.log("=".repeat(50));
 

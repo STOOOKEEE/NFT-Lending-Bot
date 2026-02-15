@@ -33,6 +33,7 @@ import { saveBlurMarketData } from "./utils/blur-db";
 import { initGondiContext, sendGondiCollectionOffer, getWethBalanceEth, GondiContext } from "./execution/send-gondi-offer";
 import { sendBlurOffer, initBlurWallet, getBlurPoolBalanceEth, BlurOfferParams } from "./adapters/BlurAdapter";
 import { checkAndLiquidate, LiquidationResult } from "./execution/liquidation";
+import { sleep, getDurationBucket, getEthUsdPrice, toETHEquivalent } from "./utils/helpers";
 
 // ==================== CONFIGURATION ====================
 
@@ -63,21 +64,9 @@ const PRICE_ALERT_THRESHOLD = 0.10; // Alerte si floor bouge de +/- 10%
 
 // ==================== HELPERS ====================
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function log(emoji: string, message: string): void {
   const timestamp = new Date().toLocaleTimeString();
   console.log(`[${timestamp}] ${emoji} ${message}`);
-}
-
-function getDurationBucket(durationDays: number): number {
-  const DURATION_BUCKETS = [5, 7, 10, 15, 30, 60, 90, 120];
-  for (const bucket of DURATION_BUCKETS) {
-    if (durationDays <= bucket) return bucket;
-  }
-  return DURATION_BUCKETS[DURATION_BUCKETS.length - 1];
 }
 
 function timestampToISODate(timestamp: string): string {
@@ -86,38 +75,6 @@ function timestampToISODate(timestamp: string): string {
     return new Date(num * 1000).toISOString();
   }
   return new Date(timestamp).toISOString();
-}
-
-// Cache du prix ETH/USD (refresh toutes les 10 minutes max)
-let cachedEthPrice: number | null = null;
-let ethPriceFetchedAt = 0;
-const ETH_PRICE_CACHE_MS = 10 * 60 * 1000;
-
-async function getEthUsdPrice(): Promise<number> {
-  const now = Date.now();
-  if (cachedEthPrice && now - ethPriceFetchedAt < ETH_PRICE_CACHE_MS) {
-    return cachedEthPrice;
-  }
-  try {
-    const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
-    const data = await res.json() as { ethereum?: { usd?: number } };
-    const price = data?.ethereum?.usd;
-    if (price && price > 0) {
-      cachedEthPrice = price;
-      ethPriceFetchedAt = now;
-      return price;
-    }
-  } catch {
-    // Fallback silencieux
-  }
-  return cachedEthPrice || 2500;
-}
-
-function toETHEquivalent(amount: number, currency: string, ethUsdPrice: number): number {
-  if (currency === "USDC" || currency === "HUSDC") {
-    return amount / ethUsdPrice;
-  }
-  return amount;
 }
 
 // ==================== TELEGRAM ====================

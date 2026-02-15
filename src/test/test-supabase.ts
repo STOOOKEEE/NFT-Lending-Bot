@@ -73,8 +73,8 @@ async function testSupabase() {
       };
       await savePriceToDb(priceRecord);
       console.log(`   ✅ Floor: ${priceRecord.floor_price} ETH - Saved to DB`);
-    } catch (error: any) {
-      console.log(`   ❌ Error: ${error.message}`);
+    } catch (error: unknown) {
+      console.log(`   ❌ Error: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
