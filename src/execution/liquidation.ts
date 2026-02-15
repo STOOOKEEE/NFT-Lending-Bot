@@ -1,0 +1,166 @@
+/**
+ * liquidation.ts - Détecte et exécute les liquidations de prêts en défaut
+ *
+ * Pour Gondi:
+ *   - Fetch nos prêts actifs via gondi.loans()
+ *   - Détecte ceux qui ont dépassé startTime + duration (= en défaut)
+ *   - Appelle gondi.liquidateLoan() pour saisir le collatéral NFT
+ *
+ * Pour Blur:
+ *   - Les prêts Blur sont rolling (pas de date d'expiration fixe)
+ *   - Le lender peut "recall", le borrower a X heures pour repay
+ *   - Pour l'instant: alerte Telegram seulement, pas de recall automatique
+ */
+
+import { GondiContext } from "./send-gondi-offer";
+import { LoanStatusType } from "gondi";
+
+// ==================== TYPES ====================
+
+export interface LiquidationResult {
+  checked: number;
+  liquidated: number;
+  errors: number;
+  alerts: string[];
+}
+
+interface GondiLoan {
+  id: string;
+  loanId: number;
+  contractAddress: `0x${string}`;
+  borrowerAddress: `0x${string}`;
+  principalAmount: bigint;
+  duration: bigint;
+  startTime: bigint;
+  status: string;
+  nftCollateralTokenId: bigint;
+  nftCollateralAddress: `0x${string}` | undefined;
+  borrower: `0x${string}`;
+  source: {
+    lender: `0x${string}`;
+    loanId: bigint;
+    startTime: bigint;
+    originationFee: bigint;
+    principalAmount: bigint;
+    lenderAddress: string;
+    accruedInterest: bigint;
+    aprBps: bigint;
+  }[];
+  protocolFee: bigint;
+  principalAddress: `0x${string}`;
+  blendedAprBps: number;
+  nft: {
+    tokenId: bigint;
+    collection?: {
+      slug: string;
+      name?: string | null;
+    } | null;
+  };
+  currency: {
+    symbol: string;
+    decimals: number;
+  };
+}
+
+// ==================== HELPERS ====================
+
+function formatEthAmount(amount: bigint, decimals: number): string {
+  const divisor = BigInt(10 ** decimals);
+  const whole = amount / divisor;
+  const fraction = amount % divisor;
+  const fractionStr = fraction.toString().padStart(decimals, "0").slice(0, 4);
+  return `${whole}.${fractionStr}`;
+}
+
+// ==================== MAIN ====================
+
+/**
+ * Check for defaulted loans and liquidate them.
+ * A loan is defaulted when: now > startTime + duration (in seconds)
+ */
+export async function checkAndLiquidate(
+  gondiCtx: GondiContext,
+  sendOffers: boolean
+): Promise<LiquidationResult> {
+  const result: LiquidationResult = {
+    checked: 0,
+    liquidated: 0,
+    errors: 0,
+    alerts: [],
+  };
+
+  try {
+    // Fetch our active loans on Gondi
+    const walletAddress = gondiCtx.walletAddress.toLowerCase() as `0x${string}`;
+
+    const loansResponse = await gondiCtx.gondi.loans({
+      statuses: [LoanStatusType.LoanInitiated],
+      limit: 50,
+    });
+
+    const allLoans = loansResponse.loans as unknown as GondiLoan[];
+
+    // Filter loans where we are a lender (in any source/tranche)
+    const ourLoans = allLoans.filter(loan =>
+      loan.source.some(s => s.lenderAddress.toLowerCase() === walletAddress)
+    );
+
+    result.checked = ourLoans.length;
+
+    if (ourLoans.length === 0) {
+      return result;
+    }
+
+    const now = BigInt(Math.floor(Date.now() / 1000));
+
+    for (const loan of ourLoans) {
+      const endTime = loan.startTime + loan.duration;
+      const isExpired = now > endTime;
+
+      if (!isExpired) continue;
+
+      // Loan has defaulted
+      const collectionName = loan.nft?.collection?.name || "Unknown";
+      const collectionSlug = loan.nft?.collection?.slug || "unknown";
+      const amount = formatEthAmount(loan.principalAmount, loan.currency.decimals);
+      const overdueSec = Number(now - endTime);
+      const overdueHours = (overdueSec / 3600).toFixed(1);
+
+      const alertMsg = `${collectionName} | ${amount} ${loan.currency.symbol} | Overdue ${overdueHours}h`;
+
+      if (sendOffers) {
+        // Attempt liquidation
+        try {
+          console.log(`  ⚠️  Liquidating loan ${loan.loanId} (${collectionSlug})...`);
+
+          const txResult = await gondiCtx.gondi.liquidateLoan({
+            loan: loan as unknown as Parameters<typeof gondiCtx.gondi.liquidateLoan>[0]["loan"],
+            loanId: BigInt(loan.loanId),
+          });
+
+          const receipt = await txResult.waitTxInBlock();
+          console.log(`  ✅ Liquidated loan ${loan.loanId} - tx: ${receipt.blockHash}`);
+
+          result.liquidated++;
+          result.alerts.push(`✅ LIQUIDATED | ${alertMsg}`);
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`  ❌ Liquidation failed for loan ${loan.loanId}: ${errMsg}`);
+          result.errors++;
+          result.alerts.push(`❌ LIQUIDATION FAILED | ${alertMsg} | ${errMsg}`);
+        }
+      } else {
+        // Dry-run mode
+        console.log(`  📋 [DRY-RUN] Would liquidate loan ${loan.loanId}: ${alertMsg}`);
+        result.alerts.push(`📋 DEFAULT DETECTED | ${alertMsg}`);
+      }
+    }
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`❌ Liquidation check failed: ${errMsg}`);
+    result.errors++;
+    result.alerts.push(`❌ Liquidation check error: ${errMsg}`);
+  }
+
+  return result;
+}

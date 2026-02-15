@@ -8,7 +8,6 @@ import { getLatestFloorPrice } from "../utils/price-db";
 import { calculateVolatilityFromDb } from "../engines/volatility";
 import {
   priceLoan,
-  priceMultipleDurations,
   GONDI_DURATIONS,
   type MarketData,
   type PricingConfig,
@@ -97,30 +96,19 @@ async function testPricerForCollection(collectionSlug: string, collectionName: s
     console.log("═".repeat(60));
 
     const loanAmount = floorPrice * 0.4;
-    const multiDuration = priceMultipleDurations(
-      marketData,
-      loanAmount,
-      collectionName,
-      GONDI_DURATIONS,
-      CUSTOM_CONFIG
-    );
-
-    console.log(`\n🎯 Best Duration: ${multiDuration.bestDuration ? multiDuration.bestDuration + " days" : "None"}`);
-    console.log(`\nAll Durations:`);
-
-    for (const { days, pricing } of multiDuration.durations) {
-      const symbol = pricing.isViable ? "✅" : "❌";
-      const marker = days === multiDuration.bestDuration ? "⭐" : "  ";
+    for (const days of GONDI_DURATIONS) {
+      const result = priceLoan(marketData, loanAmount, days, CUSTOM_CONFIG);
+      const symbol = result.isViable ? "✅" : "❌";
       console.log(
-        `${marker} ${symbol} ${days}d: ` +
-        `APR ${(pricing.recommendedApr * 100).toFixed(2)}% | ` +
-        `Risk ${pricing.riskScore}/100 | ` +
-        `Profit ${pricing.expectedProfit.toFixed(4)} ETH`
+        `  ${symbol} ${days}d: ` +
+        `APR ${(result.recommendedApr * 100).toFixed(2)}% | ` +
+        `Risk ${result.riskScore}/100 | ` +
+        `Profit ${result.expectedProfit.toFixed(4)} ETH`
       );
     }
 
-  } catch (error: any) {
-    console.error(`❌ Error testing ${collectionSlug}:`, error.message);
+  } catch (error: unknown) {
+    console.error(`❌ Error testing ${collectionSlug}:`, error instanceof Error ? error.message : String(error));
   }
 }
 

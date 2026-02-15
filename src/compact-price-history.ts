@@ -15,7 +15,7 @@
  */
 
 import "dotenv/config";
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseClient } from "./utils/supabase";
 
 const KEEP_DAYS = 7; // Garder 7 jours en haute fréquence
 
@@ -40,14 +40,7 @@ interface DailyAverage {
 }
 
 export async function compactPriceHistory(dryRun = false): Promise<void> {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
-
-  if (!url || !key) {
-    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY required");
-  }
-
-  const supabase = createClient(url, key);
+  const supabase = getSupabaseClient();
 
   console.log("\n📦 Compacting Price History");
   console.log("=".repeat(70));

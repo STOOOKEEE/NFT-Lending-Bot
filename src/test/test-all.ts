@@ -72,12 +72,7 @@ async function testLoanPricer(): Promise<void> {
     blackScholesPut,
     annualizeVolatility,
     priceLoan,
-    priceCompetitiveOffer,
-    priceMultipleDurations,
-    isOfferStillProfitable,
-    formatPricingResult,
     DEFAULT_CONFIG,
-    GONDI_DURATIONS,
   } = await import("../engines/LoanPricer");
 
   // -- 1.1 annualizeVolatility --
@@ -146,7 +141,8 @@ async function testLoanPricer(): Promise<void> {
   assert(lowLtv.riskScore >= 0 && lowLtv.riskScore <= 100, "riskScore in [0, 100]");
 
   // Details
-  assert(lowLtv.details.spotPrice === 10.0, "details.spotPrice = floor");
+  // With no spread field → spread=0 < 10% → spotPrice = (floor + bid) / 2 = (10 + 9.8) / 2 = 9.9
+  assertApprox(lowLtv.details.spotPrice, 9.9, 0.001, "details.spotPrice = mid (floor+bid)/2");
   assert(lowLtv.details.strikePrice === 3.0, "details.strikePrice = loanAmount");
   assert(lowLtv.details.timeToExpiry > 0, "details.timeToExpiry > 0");
   assert(lowLtv.details.annualizedVolatility > 0, "details.annualizedVolatility > 0");
@@ -164,88 +160,6 @@ async function testLoanPricer(): Promise<void> {
   const long = priceLoan(marketData, 4.0, 90, DEFAULT_CONFIG);
   assert(long.riskScore >= short.riskScore, "Longer duration → higher or equal risk score");
 
-  // -- 1.4 priceCompetitiveOffer --
-  console.log("\n  --- priceCompetitiveOffer ---");
-
-  const bestOffer = {
-    loanAmount: 4.0,
-    apr: 0.50, // 50% APR
-    durationDays: 30,
-    ltv: 0.4,
-  };
-
-  const competitive = priceCompetitiveOffer(marketData, bestOffer, DEFAULT_CONFIG);
-  assert(typeof competitive.canCompete === "boolean", "canCompete is boolean");
-  assert(typeof competitive.competitiveApr === "number", "competitiveApr is number");
-  assert(typeof competitive.vsbestOffer.aprDiff === "number", "vsbestOffer.aprDiff is number");
-  assert(typeof competitive.vsbestOffer.isMoreAttractive === "boolean", "vsbestOffer.isMoreAttractive is boolean");
-
-  // If canCompete, competitiveApr should be below bestOffer APR
-  if (competitive.canCompete) {
-    assert(competitive.competitiveApr < bestOffer.apr, "competitive APR < best offer APR");
-    assertApprox(competitive.competitiveApr, bestOffer.apr - DEFAULT_CONFIG.minSpreadBelowBest, 0.0001, "competitiveApr = bestOffer.apr - spread");
-  }
-
-  // Very low market APR should prevent competition
-  const lowAprOffer = {
-    loanAmount: 4.0,
-    apr: 0.01, // 1% APR - very low
-    durationDays: 30,
-    ltv: 0.4,
-  };
-  const cantCompete = priceCompetitiveOffer(marketData, lowAprOffer, DEFAULT_CONFIG);
-  assert(cantCompete.canCompete === false, "Cannot compete with 1% APR market offer");
-
-  // -- 1.5 priceMultipleDurations --
-  console.log("\n  --- priceMultipleDurations ---");
-
-  const multi = priceMultipleDurations(marketData, 4.0, "test-collection", GONDI_DURATIONS, DEFAULT_CONFIG);
-  assert(multi.collection === "test-collection", "collection name preserved");
-  assert(multi.loanAmount === 4.0, "loanAmount preserved");
-  assertApprox(multi.ltv, 4.0 / 10.0, 0.0001, "LTV computed correctly");
-  assert(multi.durations.length === GONDI_DURATIONS.length, "All durations evaluated");
-
-  for (const { days, pricing } of multi.durations) {
-    assert(GONDI_DURATIONS.includes(days), `Duration ${days} is a valid Gondi duration`);
-    assert(typeof pricing.isViable === "boolean", `${days}d: isViable is boolean`);
-    assert(pricing.riskScore >= 0, `${days}d: riskScore >= 0`);
-  }
-
-  if (multi.bestDuration !== null) {
-    assert(GONDI_DURATIONS.includes(multi.bestDuration), "bestDuration is a valid Gondi duration");
-    const bestResult = multi.durations.find(d => d.days === multi.bestDuration);
-    assert(bestResult?.pricing.isViable === true, "bestDuration is viable");
-  }
-
-  // -- 1.6 isOfferStillProfitable --
-  console.log("\n  --- isOfferStillProfitable ---");
-
-  const existing = {
-    loanAmount: 4.0,
-    apr: 0.40, // 40%
-    durationDays: 30,
-    remainingDays: 20,
-  };
-
-  const profitCheck = isOfferStillProfitable(marketData, existing, DEFAULT_CONFIG);
-  assert(typeof profitCheck.stillProfitable === "boolean", "stillProfitable is boolean");
-  assert(typeof profitCheck.currentMinApr === "number", "currentMinApr is number");
-  assert(typeof profitCheck.margin === "number", "margin is number");
-  assert(["keep", "withdraw", "update"].includes(profitCheck.recommendation), "recommendation is valid");
-
-  if (profitCheck.stillProfitable) {
-    assert(profitCheck.margin > 0, "profitable → positive margin");
-    assert(profitCheck.recommendation !== "withdraw", "profitable → not withdraw");
-  }
-
-  // -- 1.7 formatPricingResult --
-  console.log("\n  --- formatPricingResult ---");
-
-  const formatted = formatPricingResult(lowLtv, 30);
-  assert(formatted.includes("PRICING RESULT"), "formatPricingResult has header");
-  assert(formatted.includes("VIABLE"), "formatPricingResult shows viability");
-  assert(formatted.includes("APR"), "formatPricingResult shows APR");
-  assert(formatted.includes("30 jours"), "formatPricingResult shows duration");
 }
 
 // ==================== 2. VOLATILITY ====================
@@ -615,9 +529,9 @@ async function testStrategyHelpers(): Promise<void> {
   const report: StrategyReport = {
     timestamp: new Date().toISOString(),
     collections: [
-      { collection: "azuki", shouldSendOffer: true, reason: "Can compete", offerDetails: { loanAmount: 2.0, durationDays: 30, recommendedApr: 0.25, competitiveApr: 0.30, expectedProfit: 0.05, ltv: 0.4 } },
-      { collection: "milady", shouldSendOffer: false, reason: "No price data" },
-      { collection: "bayc", shouldSendOffer: true, reason: "Can compete", offerDetails: { loanAmount: 5.0, durationDays: 14, recommendedApr: 0.20, competitiveApr: 0.28, expectedProfit: 0.08, ltv: 0.35 } },
+      { collection: "azuki", shouldSendOffer: true, reason: "Can compete", platform: "gondi", offerDetails: { loanAmount: 2.0, durationDays: 30, recommendedApr: 0.25, competitiveApr: 0.30, expectedProfit: 0.05, ltv: 0.4, offerType: "best_apr" as const } },
+      { collection: "milady", shouldSendOffer: false, reason: "No price data", platform: "gondi" },
+      { collection: "bayc", shouldSendOffer: true, reason: "Can compete", platform: "gondi", offerDetails: { loanAmount: 5.0, durationDays: 14, recommendedApr: 0.20, competitiveApr: 0.28, expectedProfit: 0.08, ltv: 0.35, offerType: "best_principal" as const } },
     ],
     summary: { total: 3, shouldSend: 2, skipped: 1 },
   };
@@ -639,8 +553,8 @@ async function testStrategyHelpers(): Promise<void> {
   const allSkipped: StrategyReport = {
     timestamp: new Date().toISOString(),
     collections: [
-      { collection: "a", shouldSendOffer: false, reason: "skip" },
-      { collection: "b", shouldSendOffer: false, reason: "skip" },
+      { collection: "a", shouldSendOffer: false, reason: "skip", platform: "gondi" },
+      { collection: "b", shouldSendOffer: false, reason: "skip", platform: "gondi" },
     ],
     summary: { total: 2, shouldSend: 0, skipped: 2 },
   };
@@ -653,6 +567,7 @@ async function testStrategyHelpers(): Promise<void> {
     collection: "azuki",
     shouldSendOffer: true,
     reason: "Can compete",
+    platform: "gondi",
     offerDetails: {
       loanAmount: 2.0,
       durationDays: 30,
@@ -660,6 +575,7 @@ async function testStrategyHelpers(): Promise<void> {
       competitiveApr: 0.30,
       expectedProfit: 0.05,
       ltv: 0.4,
+      offerType: "best_apr",
     },
   };
 
@@ -674,6 +590,7 @@ async function testStrategyHelpers(): Promise<void> {
     collection: "milady",
     shouldSendOffer: false,
     reason: "No price data",
+    platform: "gondi",
   };
   const skipFormatted = formatRecommendationShort(skipRec);
   assert(skipFormatted.includes("SKIP"), "Skipped rec shows SKIP");
@@ -902,17 +819,13 @@ async function testDbOperations(): Promise<void> {
 
   // -- 8.2 gondi-db --
   console.log("\n  --- gondi-db ---");
-  const { getAllOffers, getStats } = await import("../utils/gondi-db");
+  const { getStats } = await import("../utils/gondi-db");
 
   try {
     const stats = await getStats();
     assert(typeof stats.total === "number", `Stats: ${stats.total} total offers`);
     assert(typeof stats.collections === "number", `Stats: ${stats.collections} collections`);
     console.log(`  ✅ getStats: ${stats.total} offers, ${stats.collections} collections`);
-    totalPassed++;
-
-    const offers = await getAllOffers();
-    assert(Array.isArray(offers), `getAllOffers returns array (${offers.length} items)`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(`  ⚠️  gondi-db test error: ${msg}`);

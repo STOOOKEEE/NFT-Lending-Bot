@@ -1,12 +1,14 @@
 /**
  * price-fetcher.ts - Récupère les prix NFT via OpenSea API
- * 
+ *
  * Features:
  * - Floor price (prix minimum de listing)
  * - Top bid (meilleure offre d'achat)
  * - Mid price (moyenne floor + bid)
  * - Horodatage
  */
+
+import { sendRateLimitAlert } from "../utils/telegram";
 
 // ==================== TYPES ====================
 
@@ -39,7 +41,11 @@ function sleep(ms: number): Promise<void> {
 
 const MAX_RETRIES = 3;
 
-async function fetchWithRetry(url: string, headers: Record<string, string>): Promise<Response> {
+async function fetchWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  collectionSlug?: string
+): Promise<Response> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const response = await fetch(url, { headers });
 
@@ -47,6 +53,12 @@ async function fetchWithRetry(url: string, headers: Record<string, string>): Pro
       const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
       const totalWait = backoff + RATE_LIMIT_DELAY_MS; // backoff + respect global rate limit
       console.warn(`[OpenSea] Rate limited (429), retrying in ${totalWait / 1000}s...`);
+
+      // Envoyer alerte Telegram si c'est la première tentative
+      if (attempt === 0 && collectionSlug) {
+        await sendRateLimitAlert(collectionSlug, totalWait / 1000);
+      }
+
       await sleep(totalWait);
       continue;
     }
@@ -70,7 +82,8 @@ async function fetchFloorPrice(
     const headers = { "X-API-KEY": apiKey, "Accept": "application/json" };
     const response = await fetchWithRetry(
       `${OPENSEA_API_BASE}/collections/${collectionSlug}/stats`,
-      headers
+      headers,
+      collectionSlug
     );
 
     if (!response.ok) {
@@ -117,7 +130,8 @@ async function fetchTopBid(
     const headers = { "X-API-KEY": apiKey, "Accept": "application/json" };
     const response = await fetchWithRetry(
       `${OPENSEA_API_BASE}/offers/collection/${collectionSlug}?limit=10`,
-      headers
+      headers,
+      collectionSlug
     );
 
     if (!response.ok) {

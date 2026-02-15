@@ -8,7 +8,7 @@
  *   2. Syncer les offres compétiteurs sur Gondi
  *   3. Tracker les offres acceptées (EXECUTED)
  *   4. Évaluer la stratégie pour chaque collection
- *   5. Publier les offres compétitives (expiration 35 min)
+ *   5. Publier les offres compétitives (expiration 30 min)
  *
  * Les offres expirent naturellement → pas de gas pour annuler.
  * Si le marché bouge, le prochain cycle ajuste les paramètres.
@@ -28,15 +28,16 @@ import { loadEnabledCollections, CollectionConfig } from "./utils/collections-lo
 import { RiskManager, DEFAULT_RISK_LIMITS } from "./risk/RiskManager";
 import { trackOurOffers, formatTrackingResult, TrackingResult } from "./execution/loan-tracker";
 import { compactPriceHistory } from "./compact-price-history";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
+import { collectBlurMarketData, displayBlurMarketData } from "./collectors/blur-market-collector";
+import { saveBlurMarketData } from "./utils/blur-db";
+import { initGondiContext, sendGondiCollectionOffer, getWethBalanceEth, GondiContext } from "./execution/send-gondi-offer";
+import { sendBlurOffer, initBlurWallet, getBlurPoolBalanceEth, BlurOfferParams } from "./adapters/BlurAdapter";
+import { checkAndLiquidate, LiquidationResult } from "./execution/liquidation";
 
 // ==================== CONFIGURATION ====================
 
-/** Collecte des prix indépendante (30 min) - reduced from 10 to avoid OpenSea rate limits after 8+ hours */
-const PRICE_COLLECTION_INTERVAL = 30 * 60 * 1000;
+/** Collecte des prix indépendante (1h) - hourly to have recent prices without rate limiting */
+const PRICE_COLLECTION_INTERVAL = 60 * 60 * 1000;
 
 /** Intervalle du cycle principal: sync + tracking + stratégie (30 min) */
 const MAIN_CYCLE_INTERVAL = 30 * 60 * 1000;
@@ -53,6 +54,7 @@ const TELEGRAM_ENABLED = !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEG
 let COLLECTIONS: CollectionConfig[] = [];
 let riskManager: RiskManager;
 let priceFetcher: PriceFetcher;
+let gondiCtx: GondiContext | null = null;
 let cycleCount = 0;
 
 // Tracking des prix pour détecter les mouvements importants
@@ -312,6 +314,30 @@ async function syncGondiOffers(): Promise<void> {
   }
 }
 
+// ==================== STEP 2b: BLUR MARKET SYNC ====================
+
+async function syncBlurMarket(): Promise<void> {
+  log("🔵", "Syncing Blur Blend market data...");
+
+  try {
+    const summaries = await collectBlurMarketData();
+    displayBlurMarketData(summaries);
+
+    if (summaries.length > 0) {
+      const result = await saveBlurMarketData(summaries);
+      log("💾", `Blur: saved ${result.success} collections, ${result.failed} failed`);
+    } else {
+      log("⏭️", "No Blur lending activity in the last 24h");
+    }
+
+    log("✅", "Blur market sync completed");
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Blur market sync failed: ${msg}`);
+    await sendTelegramMessage(`<b>❌ BLUR SYNC ERROR</b>\n${msg}`);
+  }
+}
+
 // ==================== STEP 3: LOAN TRACKING ====================
 
 async function trackLoans(): Promise<TrackingResult | null> {
@@ -331,17 +357,45 @@ async function trackLoans(): Promise<TrackingResult | null> {
       );
     }
 
-    if (result.cancelled > 0) {
-      await sendTelegramMessage(
-        `<b>🚫 OFFERS CANCELLED</b>\n${result.cancelled} offer(s) cancelled on-chain`
-      );
-    }
+    // Cancelled offers logged in console only (not Telegram)
 
     return result;
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`❌ Loan tracking failed: ${msg}`);
     await sendTelegramMessage(`<b>❌ TRACKING ERROR</b>\n${msg}`);
+    return null;
+  }
+}
+
+// ==================== STEP 3b: LIQUIDATION CHECK ====================
+
+async function checkAndLiquidateLoans(): Promise<LiquidationResult | null> {
+  if (!gondiCtx) return null;
+
+  log("⚠️ ", "Checking for defaulted loans...");
+
+  try {
+    const result = await checkAndLiquidate(gondiCtx, SEND_OFFERS);
+
+    if (result.checked === 0) {
+      log("✅", "No active loans to check");
+      return result;
+    }
+
+    log("🔍", `Checked ${result.checked} loan(s): ${result.liquidated} liquidated, ${result.errors} error(s)`);
+
+    if (result.alerts.length > 0) {
+      await sendTelegramMessage(
+        `<b>⚠️ LIQUIDATION CHECK</b>\n${result.alerts.join("\n")}`
+      );
+    }
+
+    return result;
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Liquidation check failed: ${msg}`);
+    await sendTelegramMessage(`<b>❌ LIQUIDATION ERROR</b>\n${msg}`);
     return null;
   }
 }
@@ -375,68 +429,103 @@ async function executeStrategy(): Promise<CycleStats> {
     log("✅", `Found ${offersToSend.length} competitive offers`);
 
     if (SEND_OFFERS) {
+      // Fetch balances once before sending any offers
+      let wethBalance = Infinity;
+      let blurPoolBalance = Infinity;
+
+      if (gondiCtx) {
+        try {
+          wethBalance = await getWethBalanceEth(gondiCtx);
+          log("💰", `WETH balance: ${wethBalance.toFixed(4)} ETH`);
+        } catch {
+          log("⚠️ ", "Could not fetch WETH balance — skipping balance checks for Gondi");
+        }
+      }
+
+      try {
+        blurPoolBalance = await getBlurPoolBalanceEth();
+        log("💰", `Blur Pool balance: ${blurPoolBalance.toFixed(4)} ETH`);
+      } catch {
+        log("⚠️ ", "Could not fetch Blur Pool balance — skipping balance checks for Blur");
+      }
+
       for (const offer of offersToSend) {
         if (!offer.offerDetails) continue;
 
-        const { loanAmount, durationDays, competitiveApr } = offer.offerDetails;
+        const { loanAmount, durationDays, competitiveApr, offerType } = offer.offerDetails;
+        const t = offerType === "best_apr" ? "T1" : "T2";
+        const platform = offer.platform.toUpperCase();
 
-        const riskCheck = riskManager.canAllocateCapital(offer.collection, loanAmount);
-        if (!riskCheck.canAllocate) {
-          log("⚠️", `Skipping ${offer.collection}: ${riskCheck.reason}`);
-          stats.riskBlocked++;
+        // Balance check: skip if offer amount > available balance
+        if (offer.platform === "gondi" && loanAmount > wethBalance) {
+          log("⏭️", `[GONDI] Skip ${t} ${offer.collection}: ${loanAmount.toFixed(3)} ETH > ${wethBalance.toFixed(3)} ETH WETH balance`);
+          stats.offersSkipped++;
+          continue;
+        }
+        if (offer.platform === "blur" && loanAmount > blurPoolBalance) {
+          log("⏭️", `[BLUR] Skip ${t} ${offer.collection}: ${loanAmount.toFixed(3)} ETH > ${blurPoolBalance.toFixed(3)} ETH Pool balance`);
+          stats.offersSkipped++;
           continue;
         }
 
-        log("📤", `Publishing offer for ${offer.collection}...`);
+        log("📤", `[${platform}] Publishing ${t} offer for ${offer.collection}...`);
 
         try {
-          const command = [
-            "npx ts-node src/execution/send-gondi-offer.ts",
-            `--collection ${offer.collection}`,
-            `--amount ${loanAmount.toFixed(4)}`,
-            `--apr ${(competitiveApr * 100).toFixed(2)}`,
-            `--duration ${durationDays}`,
-          ].join(" ");
+          if (offer.platform === "gondi" && gondiCtx) {
+            // --- GONDI ---
+            const result = await sendGondiCollectionOffer(gondiCtx, {
+              slug: offer.collection,
+              amountEth: loanAmount,
+              aprPercent: competitiveApr * 100,
+              durationDays,
+            });
 
-          const { stderr } = await execAsync(command);
+            if (result.success) {
+              log("✅", `[GONDI] ${t} offer published for ${offer.collection} (ID: ${result.offerId})`);
+              stats.offersPublished++;
+            } else {
+              console.error(`  ❌ [GONDI] Failed: ${result.error}`);
+              stats.errors++;
+              await sendTelegramMessage(`<b>❌ GONDI ERROR</b>\n${offer.collection}: ${result.error}`);
+            }
 
-          if (stderr && !stderr.includes("Debugger")) {
-            console.error(`  ⚠️ Stderr: ${stderr}`);
+          } else if (offer.platform === "blur") {
+            // --- BLUR ---
+            const collectionAddress = offer.offerDetails.collectionAddress;
+            if (!collectionAddress) {
+              console.error(`  ❌ [BLUR] No collection address for ${offer.collection}`);
+              stats.errors++;
+              continue;
+            }
+
+            const blurParams: BlurOfferParams = {
+              collectionAddress,
+              loanAmountEth: loanAmount,
+              aprBps: Math.round(competitiveApr * 10000),
+              expirationMinutes: 30,
+            };
+
+            const result = await sendBlurOffer(blurParams);
+
+            if (result.success) {
+              log("✅", `[BLUR] ${t} offer published for ${offer.collection} (${result.offerHash})`);
+              stats.offersPublished++;
+            } else {
+              console.error(`  ❌ [BLUR] Failed: ${result.error}`);
+              stats.errors++;
+              await sendTelegramMessage(`<b>❌ BLUR ERROR</b>\n${offer.collection}: ${result.error}`);
+            }
+
+          } else {
+            log("⚠️ ", `Unknown platform: ${offer.platform} for ${offer.collection}`);
+            stats.offersSkipped++;
+            continue;
           }
-
-          log("✅", `Offer published for ${offer.collection} (expires in ~35 min)`);
-          stats.offersPublished++;
-
-          // Enregistrer dans le RiskManager
-          const floorPrice = offer.marketContext?.floorPrice || loanAmount / (offer.offerDetails.ltv || 0.4);
-          const collectionConfig = COLLECTIONS.find(c => c.slug === offer.collection);
-
-          await riskManager.registerLoan({
-            offerId: `${offer.collection}-${Date.now()}`,
-            collection: offer.collection,
-            collectionAddress: collectionConfig?.address || "",
-            loanAmount,
-            apr: competitiveApr,
-            durationDays,
-            startDate: new Date(),
-            endDate: new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000),
-            collateralFloorPrice: floorPrice,
-            status: "active",
-            liquidationRisk: 0,
-          });
-
-          await sendTelegramMessage(
-            `<b>📤 OFFER</b> | ${offer.collection}\n` +
-            `${loanAmount.toFixed(3)} ETH @ ${(competitiveApr * 100).toFixed(2)}%\n` +
-            `${durationDays}d | Profit ${offer.offerDetails.expectedProfit.toFixed(4)} ETH`
-          );
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
-          console.error(`  ❌ Failed to publish offer: ${errMsg}`);
+          console.error(`  ❌ [${platform}] Failed to publish offer: ${errMsg}`);
           stats.errors++;
-          await sendTelegramMessage(
-            `<b>❌ PUBLISH ERROR</b>\n${offer.collection}: ${errMsg}`
-          );
+          await sendTelegramMessage(`<b>❌ ${platform} ERROR</b>\n${offer.collection}: ${errMsg}`);
         }
 
         await sleep(2000);
@@ -446,9 +535,11 @@ async function executeStrategy(): Promise<CycleStats> {
 
       for (const offer of offersToSend) {
         if (!offer.offerDetails) continue;
-        const { loanAmount, durationDays, competitiveApr } = offer.offerDetails;
+        const { loanAmount, durationDays, competitiveApr, offerType } = offer.offerDetails;
+        const t = offerType === "best_apr" ? "T1" : "T2";
+        const platform = offer.platform.toUpperCase();
         console.log(
-          `  📋 ${offer.collection}: ${loanAmount.toFixed(3)} ETH @ ${(competitiveApr * 100).toFixed(2)}% for ${durationDays}d`
+          `  📋 [${platform}] ${offer.collection} [${t}]: ${loanAmount.toFixed(3)} ETH @ ${(competitiveApr * 100).toFixed(2)}% for ${durationDays}d`
         );
       }
     }
@@ -473,7 +564,7 @@ async function generateRiskReport(): Promise<void> {
     try {
       const latestPrice = await getLatestFloorPrice(loan.collection);
       if (latestPrice) {
-        await riskManager.updateFloorPrice(loan.offerId, latestPrice.floor);
+        await riskManager.updateFloorPrice(loan.offerId, latestPrice.floor, latestPrice.bid);
       }
     } catch {
       // Best-effort
@@ -489,18 +580,7 @@ async function generateRiskReport(): Promise<void> {
     await sendTelegramMessage(`<b>🚨 RISK ALERTS</b>\n${alerts.join("\n")}`);
   }
 
-  // Heartbeat horaire — status même sans alertes
-  const totalExposure = activeLoans.reduce((sum, l) => sum + l.loanAmount, 0);
-  const maxCapital = parseFloat(process.env.MAX_CAPITAL_ETH || "10");
-  const utilization = maxCapital > 0 ? (totalExposure / maxCapital * 100).toFixed(0) : "0";
-
-  await sendTelegramMessage(
-    `<b>📊 HOURLY STATUS</b>\n` +
-    `⏱️ Uptime: ${cycleCount} cycles\n` +
-    `💰 ${activeLoans.length} active loan(s) — ${totalExposure.toFixed(3)} ETH\n` +
-    `📈 Capital: ${utilization}% used (${totalExposure.toFixed(2)}/${maxCapital} ETH)\n` +
-    `${alerts.length > 0 ? `🚨 ${alerts.length} alert(s)` : "✅ No alerts"}`
-  );
+  // Status logged in console only (Telegram reserved for alerts/errors)
 }
 
 // ==================== PRICE HISTORY COMPACTION ====================
@@ -521,7 +601,7 @@ async function runCompaction(): Promise<void> {
 
 /**
  * Cycle principal: sync → tracking → stratégie → publication
- * Exécuté toutes les 30 min. Les offres expirent en 35 min.
+ * Exécuté toutes les 30 min. Les offres expirent en 30 min.
  * Les prix sont collectés indépendamment toutes les 10 min.
  */
 async function runCycle(): Promise<void> {
@@ -535,39 +615,35 @@ async function runCycle(): Promise<void> {
   await syncGondiOffers();
   await sleep(2000);
 
+  // 1b. Syncer les données marché Blur (on-chain)
+  await syncBlurMarket();
+  await sleep(2000);
+
   // 2. Tracker les offres acceptées/expirées
   const tracking = await trackLoans();
+
+  // 2b. Check for defaulted loans and liquidate
+  let liquidation: LiquidationResult | null = null;
+  if (gondiCtx) {
+    liquidation = await checkAndLiquidateLoans();
+  }
 
   // 3. Évaluer et publier les offres
   const stats = await executeStrategy();
 
-  // 4. Résumé du cycle via Telegram
-  const lines: string[] = [`<b>🔄 Cycle #${cycleCount}</b>`];
+  // 4. Telegram only on errors or important events (not every cycle)
+  const hasErrors = stats.errors > 0;
+  const hasLiquidation = liquidation && liquidation.liquidated > 0;
+  const hasAcceptedLoans = tracking && tracking.executed > 0;
 
-  if (stats.offersPublished > 0) {
-    lines.push(`📤 ${stats.offersPublished} offer(s) published`);
+  if (hasErrors || hasLiquidation || hasAcceptedLoans) {
+    const lines: string[] = [`<b>🔄 Cycle #${cycleCount}</b>`];
+    if (stats.offersPublished > 0) lines.push(`📤 ${stats.offersPublished} offer(s) published`);
+    if (stats.errors > 0) lines.push(`❌ ${stats.errors} error(s)`);
+    if (hasAcceptedLoans) lines.push(`✅ ${tracking.executed} loan(s) accepted`);
+    if (hasLiquidation) lines.push(`⚠️ ${liquidation!.liquidated} loan(s) liquidated`);
+    await sendTelegramMessage(lines.join("\n"));
   }
-  if (stats.offersSkipped > 0) {
-    lines.push(`⏭️ ${stats.offersSkipped} collection(s) skipped`);
-  }
-  if (stats.riskBlocked > 0) {
-    lines.push(`🛡️ ${stats.riskBlocked} blocked by risk`);
-  }
-  if (stats.errors > 0) {
-    lines.push(`❌ ${stats.errors} error(s)`);
-  }
-  if (tracking) {
-    if (tracking.executed > 0) lines.push(`✅ ${tracking.executed} loan(s) accepted`);
-    if (tracking.expired > 0) lines.push(`⏰ ${tracking.expired} offer(s) expired`);
-  }
-
-  const activeLoans = riskManager.getActiveLoans();
-  if (activeLoans.length > 0) {
-    const totalExposure = activeLoans.reduce((sum, l) => sum + l.loanAmount, 0);
-    lines.push(`💰 ${activeLoans.length} active loan(s) — ${totalExposure.toFixed(3)} ETH`);
-  }
-
-  await sendTelegramMessage(lines.join("\n"));
 
   log("✅", `Cycle #${cycleCount} completed — next in 30 min`);
 }
@@ -591,7 +667,7 @@ async function main() {
   console.log(`📊 Collections: ${COLLECTIONS.length}`);
   console.log(`📊 Price collection: every ${PRICE_COLLECTION_INTERVAL / 60000} minutes`);
   console.log(`🔄 Main cycle: every ${MAIN_CYCLE_INTERVAL / 60000} minutes`);
-  console.log(`⏱️  Offer expiration: 35 minutes`);
+  console.log(`⏱️  Offer expiration: 30 minutes`);
   console.log(`📤 Send Offers: ${SEND_OFFERS ? "✅ ENABLED" : "❌ DISABLED (dry-run)"}`);
   console.log(`📱 Telegram: ${TELEGRAM_ENABLED ? "✅ ENABLED" : "❌ DISABLED"}`);
   console.log("=".repeat(70) + "\n");
@@ -629,6 +705,27 @@ async function main() {
 
   await riskManager.init();
   log("🛡️", `Risk Manager initialized: ${maxCapital} ETH total, ${maxExposurePerCollection} ETH per collection`);
+
+  // Init lending clients (singletons, reused for all offers)
+  if (SEND_OFFERS) {
+    try {
+      gondiCtx = initGondiContext();
+      log("✅", "Gondi client initialized");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Failed to init Gondi client: ${msg}`);
+      console.error("   Gondi offers will not be sent. Check WALLET_PRIVATE_KEY in .env");
+    }
+
+    try {
+      initBlurWallet();
+      log("✅", "Blur wallet initialized");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Failed to init Blur wallet: ${msg}`);
+      console.error("   Blur offers will not be sent. Check WALLET_PRIVATE_KEY in .env");
+    }
+  }
 
   await sendTelegramMessage(
     `<b>🤖 NFT Lending Bot Started</b>\n` +
