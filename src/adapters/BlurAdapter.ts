@@ -344,3 +344,109 @@ export async function sendBlurOffer(params: BlurOfferParams): Promise<BlurOfferR
 export function isBlurSupported(collectionAddress: string): boolean {
   return collectionAddress.toLowerCase() in BLUR_LENDING_COLLECTIONS;
 }
+
+// ==================== ACTIVE LOANS MONITORING ====================
+
+export interface BlurActiveLien {
+  lienId: string;
+  collection: string;
+  tokenId: string;
+  borrowAmount: string;
+  remainingBalance: string;
+  interestRate: number;
+  startDate: string;
+}
+
+interface ActiveLoansUserResponse {
+  lenderOffers?: Array<{
+    offerId: string;
+    collection: string;
+    rate: number;
+    maxAmount: string;
+    totalAvailable: string;
+    taken: string;
+  }>;
+  borrowerLoans?: BlurActiveLien[];
+  liens?: BlurActiveLien[];
+}
+
+/**
+ * Fetch our active Blur loans/liens.
+ * Returns liens where our wallet is involved (as lender).
+ */
+export async function fetchActiveBlurLoans(): Promise<BlurActiveLien[]> {
+  const wallet = initBlurWallet();
+  const walletAddress = wallet.address.toLowerCase();
+
+  const res = await fetch(
+    `https://${BLUR_HOST}/v1/blend/active-loans/${walletAddress}`,
+    {
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": BLUR_HOST,
+      },
+    }
+  );
+
+  if (!res.ok) {
+    console.error(`[blur] Active loans fetch failed: ${res.status}`);
+    return [];
+  }
+
+  const data = await res.json() as { data?: ActiveLoansUserResponse };
+  const response = data?.data;
+  if (!response) return [];
+
+  // Return liens (active loans we funded) if available
+  return response.liens || response.borrowerLoans || [];
+}
+
+export interface BlurRepayResult {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Trigger a repay/recall on a Blur Blend lien.
+ * Calls POST /v1/blend/lien/repay to initiate the recall process.
+ */
+export async function triggerBlurRepay(
+  contractAddress: string,
+  lienId: string,
+  tokenId: string
+): Promise<BlurRepayResult> {
+  try {
+    const wallet = initBlurWallet();
+    const accessToken = await getAuthToken(wallet);
+    const userAddress = wallet.address.toLowerCase();
+
+    console.log(`  🔵 Blur repay: lienId=${lienId} tokenId=${tokenId} collection=${contractAddress}`);
+
+    const res = await fetch(`https://${BLUR_HOST}/v1/blend/lien/repay`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": BLUR_HOST,
+        "authToken": accessToken,
+        "walletAddress": userAddress,
+      },
+      body: JSON.stringify({
+        userAddress,
+        lienRequests: [{ lienId, tokenId }],
+        contractAddress: contractAddress.toLowerCase(),
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      return { success: false, error: `Repay failed: ${res.status} - ${body}` };
+    }
+
+    console.log(`  ✅ Blur repay triggered for lien ${lienId}`);
+    return { success: true };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}

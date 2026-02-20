@@ -62,7 +62,6 @@ async function testPricerForCollection(collectionSlug: string, collectionName: s
       middlePrice: floorPrice,  // Approximation
       topBid: floorPrice * 0.95, // Approximation: 5% sous le floor
       volatility: volatilityData.rolling30d,
-      volatilityPeriodDays: 30,
     };
 
     // 4. Tester avec différents LTV

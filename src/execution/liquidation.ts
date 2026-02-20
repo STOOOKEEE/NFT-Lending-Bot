@@ -8,12 +8,18 @@
  *
  * Pour Blur:
  *   - Les prêts Blur sont rolling (pas de date d'expiration fixe)
- *   - Le lender peut "recall", le borrower a X heures pour repay
- *   - Pour l'instant: alerte Telegram seulement, pas de recall automatique
+ *   - Le lender peut initier un repay/recall via POST /v1/blend/lien/repay
+ *   - On monitor le LTV et on trigger le recall si le floor chute trop
  */
 
 import { GondiContext } from "./send-gondi-offer";
 import { LoanStatusType } from "gondi";
+import {
+  fetchActiveBlurLoans,
+  triggerBlurRepay,
+} from "../adapters/BlurAdapter";
+import { getLatestFloorPrice } from "../utils/price-db";
+import { findCollectionByAddress } from "../utils/collections-loader";
 
 // ==================== TYPES ====================
 
@@ -160,6 +166,110 @@ export async function checkAndLiquidate(
     console.error(`❌ Liquidation check failed: ${errMsg}`);
     result.errors++;
     result.alerts.push(`❌ Liquidation check error: ${errMsg}`);
+  }
+
+  return result;
+}
+
+// ==================== BLUR LOAN MONITORING ====================
+
+/** LTV threshold above which we trigger a recall */
+const BLUR_RECALL_LTV = 0.90;
+
+/** LTV threshold for Telegram warning (before recall) */
+const BLUR_WARN_LTV = 0.85;
+
+export interface BlurMonitorResult {
+  checked: number;
+  recalled: number;
+  warnings: number;
+  errors: number;
+  alerts: string[];
+}
+
+/**
+ * Reverse-lookup: collection address → collections.json slug for price DB.
+ */
+function blurAddressToSlug(address: string): string {
+  const col = findCollectionByAddress(address);
+  return col?.slug || address;
+}
+
+/**
+ * Monitor active Blur Blend loans.
+ * If LTV exceeds BLUR_RECALL_LTV, trigger a repay/recall.
+ * If LTV exceeds BLUR_WARN_LTV, send a warning.
+ */
+export async function checkBlurLoans(sendOffers: boolean): Promise<BlurMonitorResult> {
+  const result: BlurMonitorResult = {
+    checked: 0,
+    recalled: 0,
+    warnings: 0,
+    errors: 0,
+    alerts: [],
+  };
+
+  try {
+    const liens = await fetchActiveBlurLoans();
+
+    if (liens.length === 0) {
+      return result;
+    }
+
+    result.checked = liens.length;
+    console.log(`  [blur-monitor] ${liens.length} active lien(s) found`);
+
+    for (const lien of liens) {
+      const collection = lien.collection?.toLowerCase() || "";
+      const slug = blurAddressToSlug(collection);
+      const loanAmount = parseFloat(lien.remainingBalance || lien.borrowAmount);
+
+      if (isNaN(loanAmount) || loanAmount <= 0) continue;
+
+      // Get current floor price
+      const priceData = await getLatestFloorPrice(slug);
+      if (!priceData) {
+        console.log(`  [blur-monitor] No price data for ${slug}, skipping lien ${lien.lienId}`);
+        continue;
+      }
+
+      const floor = priceData.floor;
+      if (floor <= 0) continue;
+
+      const ltv = loanAmount / floor;
+      const pct = `${(ltv * 100).toFixed(1)}%`;
+
+      if (ltv >= BLUR_RECALL_LTV) {
+        // LTV critical — trigger recall
+        const alertMsg = `🚨 BLUR RECALL | ${slug} | lien ${lien.lienId} | LTV ${pct} | ${loanAmount.toFixed(3)} ETH / floor ${floor.toFixed(3)}`;
+        console.log(`  ${alertMsg}`);
+
+        if (sendOffers) {
+          const repayResult = await triggerBlurRepay(collection, lien.lienId, lien.tokenId);
+          if (repayResult.success) {
+            result.recalled++;
+            result.alerts.push(`✅ RECALLED | ${slug} lien ${lien.lienId} | LTV ${pct}`);
+          } else {
+            result.errors++;
+            result.alerts.push(`❌ RECALL FAILED | ${slug} lien ${lien.lienId} | ${repayResult.error}`);
+          }
+        } else {
+          result.alerts.push(`📋 [DRY-RUN] Would recall ${slug} lien ${lien.lienId} | LTV ${pct}`);
+        }
+      } else if (ltv >= BLUR_WARN_LTV) {
+        // LTV warning — alert only
+        result.warnings++;
+        result.alerts.push(`⚠️ BLUR WARNING | ${slug} lien ${lien.lienId} | LTV ${pct}`);
+        console.log(`  [blur-monitor] ⚠️ ${slug} lien ${lien.lienId}: LTV ${pct} (warn threshold)`);
+      } else {
+        console.log(`  [blur-monitor] ✅ ${slug} lien ${lien.lienId}: LTV ${pct} (healthy)`);
+      }
+    }
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`❌ Blur monitor failed: ${errMsg}`);
+    result.errors++;
+    result.alerts.push(`❌ Blur monitor error: ${errMsg}`);
   }
 
   return result;

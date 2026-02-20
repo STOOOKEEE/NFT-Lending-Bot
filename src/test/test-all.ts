@@ -125,7 +125,6 @@ async function testLoanPricer(): Promise<void> {
     middlePrice: 10.5,
     topBid: 9.8,
     volatility: 0.30,
-    volatilityPeriodDays: 30,
   };
 
   // Low LTV should be viable
@@ -495,13 +494,13 @@ async function testRiskManager(): Promise<void> {
   console.log("\n  --- generateReport ---");
   const emptyReport = rm8.generateReport();
   assert(emptyReport.includes("PORTFOLIO REPORT"), "Report has header");
-  assert(emptyReport.includes("Active Loans:       0"), "Shows 0 loans");
+  assert(emptyReport.includes("Active Loans: 0"), "Shows 0 loans");
 
   await rm8.registerLoan(makePosition({ offerId: "rep-1", collection: "azuki", loanAmount: 2.0, apr: 0.20 }));
   const report = rm8.generateReport();
-  assert(report.includes("Active Loans:       1"), "Shows 1 loan");
+  assert(report.includes("Active Loans: 1"), "Shows 1 loan");
   assert(report.includes("azuki"), "Shows collection name");
-  assert(report.includes("Deployed"), "Shows deployed capital");
+  assert(report.includes("Capital:"), "Shows deployed capital");
 
   // -- 3.13 Average APR --
   console.log("\n  --- averageAPR ---");

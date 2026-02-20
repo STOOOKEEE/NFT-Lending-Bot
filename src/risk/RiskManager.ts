@@ -80,10 +80,37 @@ function rowToPosition(row: RiskPositionRow): LoanPosition {
 export class RiskManager {
   private positions: Map<string, LoanPosition> = new Map();
   private limits: RiskLimits;
+  /** Per-collection max exposure overrides (from collections.json maxCapitalEth) */
+  private collectionLimits: Map<string, number> = new Map();
   private initialized = false;
 
   constructor(limits: RiskLimits) {
     this.limits = limits;
+  }
+
+  /** Set per-collection exposure limit (from collections.json maxCapitalEth) */
+  setCollectionLimit(slug: string, maxEth: number): void {
+    this.collectionLimits.set(slug, maxEth);
+  }
+
+  /** Get effective exposure limit for a collection */
+  getCollectionLimit(slug: string): number {
+    return this.collectionLimits.get(slug) ?? this.limits.maxExposurePerCollection;
+  }
+
+  /** Update global limits at runtime (for Telegram commands) */
+  updateLimits(partial: Partial<RiskLimits>): void {
+    this.limits = { ...this.limits, ...partial };
+  }
+
+  /** Get current limits (for Telegram status) */
+  getLimits(): RiskLimits {
+    return { ...this.limits };
+  }
+
+  /** Get all per-collection limits */
+  getCollectionLimits(): Map<string, number> {
+    return new Map(this.collectionLimits);
   }
 
   async init(): Promise<void> {
@@ -96,6 +123,8 @@ export class RiskManager {
 
       if (error) {
         console.error("[RiskManager] DB load error:", error.message);
+        // Still initialize but log warning — positions will be empty
+        // canAllocateCapital will work with conservative defaults
         this.initialized = true;
         return;
       }
@@ -130,8 +159,9 @@ export class RiskManager {
     }
 
     const currentExposure = stats.totalExposure[collection] || 0;
-    if (currentExposure + amount > this.limits.maxExposurePerCollection) {
-      return { canAllocate: false, reason: `Collection exposure limit reached` };
+    const collectionMax = this.getCollectionLimit(collection);
+    if (currentExposure + amount > collectionMax) {
+      return { canAllocate: false, reason: `Collection exposure ${(currentExposure + amount).toFixed(2)} > ${collectionMax.toFixed(2)} ETH` };
     }
 
     if (this.getActiveLoansForCollection(collection).length >= this.limits.maxLoansPerCollection) {

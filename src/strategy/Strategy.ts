@@ -79,6 +79,9 @@ const MIN_VOLATILITY_DATA_DAYS = 3;
 /** APR max 80% — safety cap */
 const MAX_APR_CAP = 0.8;
 
+/** Blur: higher LTV allowed since loans are rolling (lender can exit anytime) */
+const BLUR_MAX_LTV = 0.80;
+
 // ==================== ANALYSE D'UNE COLLECTION ====================
 
 /**
@@ -147,7 +150,6 @@ export async function analyzeCollection(
       middlePrice: mid,
       topBid: bid,
       volatility: ewmaAnnualized,
-      volatilityPeriodDays: 365,
       spread,
     };
 
@@ -270,22 +272,24 @@ export async function analyzeCollection(
       const blurData = await getBlurMarketBySlug(blurSlug);
 
       if (blurData && blurData.best_apr_bps > 0) {
-        // Blur: rolling loans, use 30 days for pricing reference
-        const blurDurationDays = 30;
+        // Blur: rolling loans (no fixed duration), lender can exit anytime
+        // Use higher LTV than Gondi since we can monitor and exit if floor drops
+        const blurDurationDays = 30; // reference for pricing only
         const bestBlurAprDecimal = blurData.best_apr_bps / 10000; // bps → decimal
         const blurOfferApr = bestBlurAprDecimal - 0.01; // undercut by 1%
-        const blurAmount = roundToBlurTick(blurData.best_offer_amount_eth);
+        const blurAmount = roundToBlurTick(floor * BLUR_MAX_LTV);
         const blurLtv = floor > 0 ? blurAmount / floor : 0;
 
-        if (blurAmount >= 0.1 && blurOfferApr > 0 && blurLtv <= maxLtv) {
+        if (blurAmount >= 0.1 && blurOfferApr > 0 && blurLtv <= BLUR_MAX_LTV) {
           const pricing = priceLoan(marketData, blurAmount, blurDurationDays, config);
           const isProfitable = pricing.minApr < blurOfferApr;
           const finalApr = Math.min(blurOfferApr, MAX_APR_CAP);
 
-          if (isProfitable && pricing.isViable) {
+          // Blur: only check profitability, skip isViable (rolling loans allow exit)
+          if (isProfitable) {
             const expectedProfit = blurAmount * finalApr * (blurDurationDays / 365);
             const aprBps = Math.round(finalApr * 10000);
-            console.log(`  [${slug}] SEND BLUR | ${blurAmount.toFixed(1)} ETH @ ${aprBps} bps | minApr ${pct(pricing.minApr)} | LTV ${pct(blurLtv)}`);
+            console.log(`  [${slug}] SEND BLUR | ${blurAmount.toFixed(1)} ETH @ ${aprBps} bps | minApr ${pct(pricing.minApr)} | LTV ${pct(blurLtv)} | risk ${pricing.riskScore}/100`);
 
             results.push({
               collection: slug,
@@ -306,15 +310,15 @@ export async function analyzeCollection(
                 floorPrice: floor,
                 volatility: ewmaAnnualized,
                 bestMarketApr: bestBlurAprDecimal,
-                bestMarketAmount: blurAmount,
+                bestMarketAmount: blurData.best_offer_amount_eth,
                 bestMarketDuration: blurDurationDays,
               },
             });
           } else {
-            console.log(`  [${slug}] SKIP BLUR | minApr ${pct(pricing.minApr)} > ${pct(blurOfferApr)} | ${blurAmount.toFixed(1)} ETH`);
+            console.log(`  [${slug}] SKIP BLUR | minApr ${pct(pricing.minApr)} > ${pct(blurOfferApr)} | ${blurAmount.toFixed(1)} ETH | LTV ${pct(blurLtv)}`);
           }
         } else if (blurAmount < 0.1) {
-          console.log(`  [${slug}] SKIP BLUR | amount ${blurData.best_offer_amount_eth} < 0.1 ETH min`);
+          console.log(`  [${slug}] SKIP BLUR | amount too small (${blurAmount.toFixed(3)} ETH < 0.1)`);
         }
       }
     }

@@ -79,25 +79,30 @@ export async function trackOurOffers(
         continue;
       }
 
-      // Offre exécutée = un emprunteur l'a acceptée
+      // Offre exécutée = un emprunteur l'a acceptée → register as active loan
       if (gondiStatus === OfferStatus.Executed) {
         await updateOfferStatus(localOffer.id, "EXECUTED");
-        // Le prêt est maintenant actif dans le RiskManager (déjà enregistré au moment de l'envoi)
-        // On ne fait rien de plus - le RiskManager suit déjà cette position
+        await riskManager.registerLoan({
+          offerId: localOffer.offer_id,
+          collection: localOffer.collection_name || localOffer.collection_address || "",
+          collectionAddress: localOffer.collection_address || "",
+          loanAmount: localOffer.principal_eth,
+          apr: localOffer.apr_percent / 100,
+          durationDays: localOffer.duration_days,
+          startDate: new Date(),
+          endDate: new Date(Date.now() + localOffer.duration_days * 86400000),
+          collateralFloorPrice: 0,
+          status: "active",
+          liquidationRisk: 0,
+        });
         result.executed++;
         console.log(`  ✅ Offer ${localOffer.offer_id} EXECUTED for ${localOffer.collection_name || localOffer.collection_address}`);
-      }
-
-      // Offre annulée
-      if (gondiStatus === OfferStatus.Cancelled) {
+      } else if (gondiStatus === OfferStatus.Cancelled) {
         await updateOfferStatus(localOffer.id, "CANCELLED");
         await riskManager.updateLoanStatus(localOffer.id, "repaid");
         result.cancelled++;
         console.log(`  🚫 Offer ${localOffer.offer_id} CANCELLED`);
-      }
-
-      // Offre expirée
-      if (gondiStatus === OfferStatus.Expired || gondiStatus === OfferStatus.Inactive) {
+      } else if (gondiStatus === OfferStatus.Expired || gondiStatus === OfferStatus.Inactive) {
         await updateOfferStatus(localOffer.id, "EXPIRED");
         await riskManager.updateLoanStatus(localOffer.id, "repaid");
         result.expired++;

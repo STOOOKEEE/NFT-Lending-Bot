@@ -11,8 +11,8 @@ export interface MarketData {
   floorPrice: number;
   middlePrice: number;
   topBid: number;
+  /** Annualized volatility (already scaled to yearly) */
   volatility: number;
-  volatilityPeriodDays: number;
   spread?: number;
 }
 
@@ -119,8 +119,8 @@ export function priceLoan(
   const T = durationDays / 365;
   const r = config.riskFreeRate;
 
-  const baseAnnualizedVol = annualizeVolatility(marketData.volatility, marketData.volatilityPeriodDays);
-  const adjustedVol = baseAnnualizedVol * config.safetyMultiplier;
+  // volatility is already annualized by the caller (Strategy.ts)
+  const adjustedVol = marketData.volatility * config.safetyMultiplier;
 
   const { premium: putPremium, d1, d2 } = blackScholesPut(S, K, T, r, adjustedVol);
   const totalPremium = putPremium + (loanAmount * config.liquidityPremium * T);

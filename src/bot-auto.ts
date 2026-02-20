@@ -32,8 +32,9 @@ import { collectBlurMarketData, displayBlurMarketData } from "./collectors/blur-
 import { saveBlurMarketData } from "./utils/blur-db";
 import { initGondiContext, sendGondiCollectionOffer, getWethBalanceEth, GondiContext } from "./execution/send-gondi-offer";
 import { sendBlurOffer, initBlurWallet, getBlurPoolBalanceEth, BlurOfferParams } from "./adapters/BlurAdapter";
-import { checkAndLiquidate, LiquidationResult } from "./execution/liquidation";
+import { checkAndLiquidate, checkBlurLoans, LiquidationResult, BlurMonitorResult } from "./execution/liquidation";
 import { sleep, getDurationBucket, getEthUsdPrice, toETHEquivalent } from "./utils/helpers";
+import { startTelegramCommands } from "./utils/telegram-commands";
 
 // ==================== CONFIGURATION ====================
 
@@ -425,6 +426,14 @@ async function executeStrategy(): Promise<CycleStats> {
           continue;
         }
 
+        // Risk check: verify capital allocation limits
+        const riskCheck = riskManager.canAllocateCapital(offer.collection, loanAmount);
+        if (!riskCheck.canAllocate) {
+          log("🛡️", `[${platform}] Skip ${t} ${offer.collection}: ${riskCheck.reason}`);
+          stats.riskBlocked++;
+          continue;
+        }
+
         log("📤", `[${platform}] Publishing ${t} offer for ${offer.collection}...`);
 
         try {
@@ -585,6 +594,19 @@ async function runCycle(): Promise<void> {
     liquidation = await checkAndLiquidateLoans();
   }
 
+  // 2c. Monitor Blur loans LTV — recall if floor drops too much
+  let blurMonitor: BlurMonitorResult | null = null;
+  try {
+    log("🔵", "Checking Blur loan LTVs...");
+    blurMonitor = await checkBlurLoans(SEND_OFFERS);
+    if (blurMonitor.checked > 0) {
+      log("🔵", `Blur monitor: ${blurMonitor.checked} lien(s), ${blurMonitor.warnings} warning(s), ${blurMonitor.recalled} recalled`);
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Blur monitor failed: ${msg}`);
+  }
+
   // 3. Évaluer et publier les offres
   const stats = await executeStrategy();
 
@@ -592,13 +614,19 @@ async function runCycle(): Promise<void> {
   const hasErrors = stats.errors > 0;
   const hasLiquidation = liquidation && liquidation.liquidated > 0;
   const hasAcceptedLoans = tracking && tracking.executed > 0;
+  const hasBlurAlerts = blurMonitor && blurMonitor.alerts.length > 0;
 
-  if (hasErrors || hasLiquidation || hasAcceptedLoans) {
+  if (hasErrors || hasLiquidation || hasAcceptedLoans || hasBlurAlerts) {
     const lines: string[] = [`<b>🔄 Cycle #${cycleCount}</b>`];
     if (stats.offersPublished > 0) lines.push(`📤 ${stats.offersPublished} offer(s) published`);
     if (stats.errors > 0) lines.push(`❌ ${stats.errors} error(s)`);
     if (hasAcceptedLoans) lines.push(`✅ ${tracking.executed} loan(s) accepted`);
     if (hasLiquidation) lines.push(`⚠️ ${liquidation!.liquidated} loan(s) liquidated`);
+    if (hasBlurAlerts) {
+      for (const alert of blurMonitor!.alerts) {
+        lines.push(alert);
+      }
+    }
     await sendTelegramMessage(lines.join("\n"));
   }
 
@@ -660,8 +688,15 @@ async function main() {
     maxExposurePerCollection,
   });
 
+  // Load per-collection limits from collections.json
+  for (const col of COLLECTIONS) {
+    if (col.maxCapitalEth > 0) {
+      riskManager.setCollectionLimit(col.slug, col.maxCapitalEth);
+    }
+  }
+
   await riskManager.init();
-  log("🛡️", `Risk Manager initialized: ${maxCapital} ETH total, ${maxExposurePerCollection} ETH per collection`);
+  log("🛡️", `Risk Manager initialized: ${maxCapital} ETH total, ${maxExposurePerCollection} ETH default per collection`);
 
   // Init lending clients (singletons, reused for all offers)
   if (SEND_OFFERS) {
@@ -690,6 +725,9 @@ async function main() {
     `🔄 Cycle: every 30 min\n` +
     `📤 Send offers: ${SEND_OFFERS ? "ON" : "OFF"}`
   );
+
+  // Start Telegram command listener (non-blocking)
+  startTelegramCommands(riskManager);
 
   // Première collecte de prix + premier cycle
   await collectPrices();

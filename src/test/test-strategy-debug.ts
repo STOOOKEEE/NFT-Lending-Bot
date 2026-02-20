@@ -163,7 +163,6 @@ async function debugCollection(slug: string): Promise<void> {
     middlePrice: mid,
     topBid: bid,
     volatility: ewmaAnnualized,
-    volatilityPeriodDays: 365,
     spread,
   };
 

@@ -15,10 +15,10 @@ const CUSTOM_CONFIG: PricingConfig = {
 };
 
 const TEST_COLLECTIONS = [
-  { name: "BAYC", marketData: { floorPrice: 15.5, middlePrice: 16.0, topBid: 15.0, volatility: 0.35, volatilityPeriodDays: 30 } as MarketData },
-  { name: "Pudgy Penguins", marketData: { floorPrice: 8.2, middlePrice: 8.5, topBid: 8.0, volatility: 0.28, volatilityPeriodDays: 30 } as MarketData },
-  { name: "Azuki", marketData: { floorPrice: 4.5, middlePrice: 4.7, topBid: 4.3, volatility: 0.42, volatilityPeriodDays: 30 } as MarketData },
-  { name: "Milady", marketData: { floorPrice: 2.8, middlePrice: 2.9, topBid: 2.7, volatility: 0.55, volatilityPeriodDays: 30 } as MarketData },
+  { name: "BAYC", marketData: { floorPrice: 15.5, middlePrice: 16.0, topBid: 15.0, volatility: 0.35 } as MarketData },
+  { name: "Pudgy Penguins", marketData: { floorPrice: 8.2, middlePrice: 8.5, topBid: 8.0, volatility: 0.28 } as MarketData },
+  { name: "Azuki", marketData: { floorPrice: 4.5, middlePrice: 4.7, topBid: 4.3, volatility: 0.42 } as MarketData },
+  { name: "Milady", marketData: { floorPrice: 2.8, middlePrice: 2.9, topBid: 2.7, volatility: 0.55 } as MarketData },
 ];
 
 function testCollection(name: string, marketData: MarketData) {

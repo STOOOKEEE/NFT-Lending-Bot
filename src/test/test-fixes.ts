@@ -70,14 +70,14 @@ function testNoDoubleAnnualization(): void {
   // Create a known annualized volatility
   const annualizedVol = 0.50; // 50% annualized
 
-  // When volatilityPeriodDays = 365, annualizeVolatility should return vol * sqrt(365/365) = vol * 1
+  // annualizeVolatility(vol, 365) should return vol * sqrt(365/365) = vol * 1
   const result = annualizeVolatility(annualizedVol, 365);
   assert(
     Math.abs(result - annualizedVol) < 0.0001,
     `annualizeVolatility(0.5, 365) = ${result.toFixed(5)} (should be 0.5, no change)`
   );
 
-  // When volatilityPeriodDays = 30, it would multiply by sqrt(365/30) ≈ 3.49 -> BAD
+  // When periodDays = 30, it would multiply by sqrt(365/30) ≈ 3.49 -> BAD
   const resultBad = annualizeVolatility(annualizedVol, 30);
   assert(
     resultBad > annualizedVol * 3,
@@ -90,7 +90,6 @@ function testNoDoubleAnnualization(): void {
     middlePrice: 9,
     topBid: 8,
     volatility: 0.50,          // Already annualized
-    volatilityPeriodDays: 365,  // Fixed: was 30 before
   };
 
   const pricing = priceLoan(marketData, 4.0, 30, DEFAULT_CONFIG);
@@ -142,7 +141,6 @@ function testVolatilityEndToEnd(): void {
     middlePrice: 9.5,
     topBid: 9,
     volatility: volResult.annualized,
-    volatilityPeriodDays: 365,
   };
 
   const pricing = priceLoan(marketData, 4.0, 30, DEFAULT_CONFIG);
