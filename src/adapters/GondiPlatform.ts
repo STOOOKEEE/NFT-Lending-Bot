@@ -7,7 +7,7 @@
 
 import "dotenv/config";
 import { Gondi, LoanStatusType } from "gondi";
-import { createWalletClient, createPublicClient, http, parseEther, formatEther, Address } from "viem";
+import { createWalletClient, createPublicClient, http, parseEther, formatEther, Address, Account } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import {
@@ -155,6 +155,7 @@ export class GondiPlatform extends LendingPlatform {
   private walletClient: ViemWalletClient | null = null;
   private publicClient: ViemPublicClient | null = null;
   private walletAddress: Address | null = null;
+  private account: Account | null = null;
   private initialized = false;
   /** Cache of collection offer steps (collectionId → steps) */
   private stepsCache = new Map<number, { wethStep: bigint; aprBpsStep: bigint }>();
@@ -185,6 +186,7 @@ export class GondiPlatform extends LendingPlatform {
     // walletClient has `account` set — Gondi needs this
     this.gondi = new Gondi({ wallet: walletClient });
     this.walletAddress = account.address;
+    this.account = account;
     this.initialized = true;
 
     console.log(`🔐 Gondi client initialized: ${account.address}`);
@@ -550,7 +552,7 @@ export class GondiPlatform extends LendingPlatform {
       console.log(`  🔓 Approving WETH for Gondi MSL...`);
       const maxApproval = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
       const hash = await this.walletClient!.writeContract({
-        account: this.walletAddress!,
+        account: this.account!,
         chain: mainnet,
         address: WETH_ADDRESS,
         abi: WETH_ABI,
