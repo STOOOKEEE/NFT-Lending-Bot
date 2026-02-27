@@ -16,8 +16,8 @@ CLAUDE.md
 data/*.json
 !data/.gitkeep
 
-# Collections config (user-specific)
-collections.json
+# Collections config (uncomment to exclude from git)
+# collections.json
 
 # OS files
 .DS_Store

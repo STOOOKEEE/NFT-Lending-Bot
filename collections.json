@@ -1,0 +1,482 @@
+[
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "anticyclone-by-william-mapan",
+    "name": "Anticyclone by William Mapan",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "archetype-by-kjetil-golid",
+    "name": "Archetype by Kjetil Golid",
+    "enabled": true
+  },
+  {
+    "address": "0xd4e4078ca3495de5b1d4db434bebc5a986197782",
+    "slug": "autoglyphs",
+    "name": "Autoglyphs",
+    "enabled": true
+  },
+  {
+    "address": "0xED5AF388653567Af2F388E6224dC7C4b3241C544",
+    "slug": "azuki",
+    "name": "Azuki",
+    "enabled": true
+  },
+  {
+    "address": "0xb6a37b5d14d502c3ab0ae6f3a0e058bc9517786e",
+    "slug": "azukielementals",
+    "name": "Azuki Elementals",
+    "enabled": true
+  },
+  {
+    "address": "0x306b1ea3ecdf94ab739f1910bbda052ed4a9f949",
+    "slug": "beanzofficial",
+    "name": "BEANZ Official",
+    "enabled": true
+  },
+  {
+    "address": "0x12f28e2106ce8fd8464885b80ea865e98b465149",
+    "slug": "beeple-special-edition",
+    "name": "BEEPLE - GENESIS COLLECTION",
+    "enabled": true
+  },
+  {
+    "address": "0xdd012153e008346591153fff28b0dd6724f0c256",
+    "slug": "beeple-spring-collection",
+    "name": "BEEPLE - SPRING/SUMMER COLLECTION 2021",
+    "enabled": true
+  },
+  {
+    "address": " ",
+    "slug": "beeple-everydays",
+    "name": "BEEPLE: EVERYDAYS - THE 2020 COLLECTION",
+    "enabled": true
+  },
+  {
+    "address": "0xba30E5F9Bb24caa003E9f2f0497Ad287FDF95623",
+    "slug": "bored-ape-kennel-club",
+    "name": "Bored Ape Kennel Club",
+    "enabled": true
+  },
+  {
+    "address": "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+    "slug": "boredapeyachtclub",
+    "name": "Bored Ape Yacht Club",
+    "enabled": true
+  },
+  {
+    "address": "0x80336ad7a747236ef41f47ed2c7641828a480baa",
+    "slug": "chimpersnft",
+    "name": "Chimpers",
+    "enabled": true
+  },
+  {
+    "address": "0x059edd72cd353df5106d2b9cc5ab83a52287ac3a",
+    "slug": "chromie-squiggle-by-snowfro",
+    "name": "Chromie Squiggle by Snowfro",
+    "enabled": true
+  },
+  {
+    "address": "0x49cF6f5d44E70224e2E23fDcdd2C053F30aDA28B",
+    "slug": "clonex",
+    "name": "CloneX",
+    "enabled": true
+  },
+  {
+    "address": "0x059edd72cd353df5106d2b9cc5ab83a52287ac3a",
+    "slug": "construction-token-by-jeff-davis",
+    "name": "Construction Token by Jeff Davis",
+    "enabled": true
+  },
+  {
+    "address": "0x1A92f7381B9F03921564a437210bB9396471050C",
+    "slug": "cool-cats-nft",
+    "name": "Cool Cats",
+    "enabled": true
+  },
+  {
+    "address": "0x5946aeaab44e65eb370ffaa6a7ef2218cff9b47d",
+    "slug": "genesis-creepz",
+    "name": "Creepz Genesis",
+    "enabled": true
+  },
+  {
+    "address": "0x1cb1a5e65610aeff2551a50f76a87a7d3fb649c6",
+    "slug": "cryptoadz-by-gremplin",
+    "name": "CrypToadz by GREMPLIN",
+    "enabled": true
+  },
+  {
+    "address": "0x42069abfe407c60cf4ae4112bedead391dba1cdb",
+    "slug": "cryptodickbutts-s3",
+    "name": "CryptoDickbutts",
+    "enabled": true
+  },
+  {
+    "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+    "slug": "cryptopunks",
+    "name": "CryptoPunks",
+    "enabled": true
+  },
+  {
+    "address": "0x282bdd42f4eb70e7a9d9f40c8fea0825b7f68c5d",
+    "slug": "official-v1-punks",
+    "name": "CryptoPunks V1 (wrapped)",
+    "enabled": true
+  },
+  {
+    "address": "0x57a204aa1042f6e66dd7730813f4024114d74f37",
+    "slug": "cyberkongz",
+    "name": "CyberKongz",
+    "enabled": true
+  },
+  {
+    "address": "0xb097fba49a679a61b18b7079b99a953ca2691c9d",
+    "slug": "dataland-biomelumina",
+    "name": "DATALAND — BIOME LUMINA",
+    "enabled": true
+  },
+  {
+    "address": "0xcee443c8e1aef5131ccae598dadf510b3d67a072",
+    "slug": "deekay-1-1",
+    "name": "DEEKAY 1/1",
+    "enabled": true
+  },
+  {
+    "address": "0xaadc2d4261199ce24a4b0a57370c4fcf43bb60aa",
+    "slug": "thecurrency",
+    "name": "Damien Hirst - The Currency",
+    "enabled": true
+  },
+  {
+    "address": "0x34d85c9cdeb23fa97cb08333b511ac86e1c4e258",
+    "slug": "degods-eth",
+    "name": "DeGods",
+    "enabled": true
+  },
+  {
+    "address": "0xd1258DB6Ac08eB0e625B75b371C023dA478E94A9",
+    "slug": "digidaigaku",
+    "name": "DigiDaigaku",
+    "enabled": true
+  },
+  {
+    "address": "0x8a90CAb2b38dba80c64b7734e58Ee1dB38B8992e",
+    "slug": "doodles-official",
+    "name": "Doodles",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "fidenza-by-tyler-hobbs",
+    "name": "Fidenza by Tyler Hobbs",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "gazers-by-matt-kane",
+    "name": "Gazers by Matt Kane",
+    "enabled": true
+  },
+  {
+    "address": "0xb8ea78fcacef50d41375e44e6814ebba36bb33c4",
+    "slug": "good-vibes-club",
+    "name": "Good Vibes Club",
+    "enabled": true
+  },
+  {
+    "address": "0xc143bbfcdbdbed6d454803804752a064a622c1f3",
+    "slug": "grifters-by-xcopy",
+    "name": "Grifters by XCOPY",
+    "enabled": true
+  },
+  {
+    "address": "0x9125e2d6827a00b0f8330d6ef7bef07730bac685",
+    "slug": "hypurr-hyperevm",
+    "name": "Hypurr",
+    "enabled": true
+  },
+  {
+    "address": "0xc04e0000726ed7c5b9f0045bc0c4806321bc6c65",
+    "slug": "icxn-by-xcopy",
+    "name": "ICXN",
+    "enabled": true
+  },
+  {
+    "address": "0x59468516a8259058baD1cA5F8f4BFF190d30E066",
+    "slug": "invisiblefriends",
+    "name": "Invisible Friends",
+    "enabled": true
+  },
+  {
+    "address": "0xdfde78d2baec499fe18f2be74b6c287eed9511d7",
+    "slug": "life-in-west-america-by-roope-rainisto",
+    "name": "Life In West America by Roope Rainisto",
+    "enabled": true
+  },
+  {
+    "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+    "slug": "lilpudgys",
+    "name": "Lil Pudgys",
+    "enabled": true
+  },
+  {
+    "address": "0xd1169e5349d1cb9941f3dcba135c8a4b9eacfdde",
+    "slug": "max-pain-and-frens-by-xcopy",
+    "name": "MAX PAIN AND FRENS BY XCOPY",
+    "enabled": true
+  },
+  {
+    "address": "0x7Bd29408f11D2bFC23c34f18275bBf23bB716Bc7",
+    "slug": "meebits",
+    "name": "Meebits",
+    "enabled": true
+  },
+  {
+    "address": "0x769272677fab02575e84945f03eca517acc544cc",
+    "slug": "memelandcaptainz",
+    "name": "Memeland Captainz",
+    "enabled": true
+  },
+  {
+    "address": "0x6efc003d3f3658383f06185503340c2cf27a57b6",
+    "slug": "memelandmvp",
+    "name": "Memeland MVP",
+    "enabled": true
+  },
+  {
+    "address": "0x39ee2c7b3cb80254225884ca001f57118c8f21b6",
+    "slug": "memelandpotatoz",
+    "name": "Memeland Potatoz",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "memories-of-qilin-by-emily-xie",
+    "name": "Memories of Qilin by Emily Xie",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "meridian-by-matt-deslauriers",
+    "name": "Meridian by Matt DesLauriers",
+    "enabled": true
+  },
+  {
+    "address": "0x5Af0D9827E0c53E4799BB226655A1de152A425a5",
+    "slug": "milady",
+    "name": "Milady",
+    "enabled": true
+  },
+  {
+    "address": "0x23581767a106ae21c074b2276d25e5c3e136a68b",
+    "slug": "moonbirds",
+    "name": "Moonbirds",
+    "enabled": true
+  },
+  {
+    "address": "0x60E4d786628Fea6478F785A6d7e704777c86a7c6",
+    "slug": "mutant-ape-yacht-club",
+    "name": "Mutant Ape Yacht Club",
+    "enabled": true
+  },
+  {
+    "address": "0xd774557b647330c91bf44cfeab205095f7e6c367",
+    "slug": "nakamigos",
+    "name": "Nakamigos",
+    "enabled": true
+  },
+  {
+    "address": "0x45882f9bc325e14fbb298a1df930c43a874b83ae",
+    "slug": "pebbles-by-zeblocks",
+    "name": "NextGen 6529 | Pebbles by Zeblocks",
+    "enabled": true
+  },
+  {
+    "address": "0x6339e5E072086621540D0362C4e3Cea0d643E114",
+    "slug": "opepen-edition",
+    "name": "Opepen Edition",
+    "enabled": true
+  },
+  {
+    "address": "0x34d85c9CDeB23FA97cb08333b511ac86E1C4E258",
+    "slug": "otherdeed",
+    "name": "Otherdeed for Otherside",
+    "enabled": true
+  },
+  {
+    "address": "0xe012baf811cf9c05c408e879c399960d1f305903",
+    "slug": "otherside-koda",
+    "name": "Otherside Koda",
+    "enabled": true
+  },
+  {
+    "address": "0x81345761670fc8b90665466a94c196e26b92ecfb",
+    "slug": "pxl-dex",
+    "name": "PXL DEX",
+    "enabled": true
+  },
+  {
+    "address": "0xc374a204334d4edd4c6a62f0867c752d65e9579c",
+    "slug": "project-aeon",
+    "name": "Project AEON",
+    "enabled": true
+  },
+  {
+    "address": "0xBd3531dA5CF5857e7CfAA92426877b022e612cf8",
+    "slug": "pudgypenguins",
+    "name": "Pudgy Penguins",
+    "enabled": true
+  },
+  {
+    "address": "0xab00000000002ade39f58f9d8278a31574ffbe77",
+    "slug": "quine-by-larva-labs",
+    "name": "Quine by Larva Labs",
+    "enabled": true
+  },
+  {
+    "address": "0xd4b7d9bb20fa20ddada9ecef8a7355ca983cccb1",
+    "slug": "quirkiesoriginals",
+    "name": "Quirkies Originals",
+    "enabled": true
+  },
+  {
+    "address": "0xdfea2b364db868b1d2601d6b833d74db4de94460",
+    "slug": "xcopy-remnants",
+    "name": "REMNANTS",
+    "enabled": true
+  },
+  {
+    "address": "0xd3d9ddd0cf0a5f0bfb8f7fceae075df687eaebab",
+    "slug": "remilio-babies",
+    "name": "Redacted Remilio Babies",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "ringers-by-dmitri-cherniak",
+    "name": "Ringers by Dmitri Cherniak",
+    "enabled": true
+  },
+  {
+    "address": "0xda6558fa1c2452938168ef79dfd29c45aba8a32b",
+    "slug": "sam-spratt-luci-chapter-5-the-monument-game",
+    "name": "Sam Spratt - LUCI: Chapter 5 - The Monument Game",
+    "enabled": true
+  },
+  {
+    "address": "0x4440732b0d85e2a77dcb2caedfd940154241249a",
+    "slug": "sam-spratt-masks-of-luci",
+    "name": "Sam Spratt - Masks of Luci",
+    "enabled": true
+  },
+  {
+    "address": "0x364c828ee171616a39897688a831c2499ad972ec",
+    "slug": "sappy-seals",
+    "name": "Sappy Seals",
+    "enabled": true
+  },
+  {
+    "address": "0x620b70123fb810f6c653da7644b5dd0b6312e4d8",
+    "slug": "space-doodles-official",
+    "name": "Space Doodles",
+    "enabled": true
+  },
+  {
+    "address": "0xeeca64ea9fcf99a22806cd99b3d29cf6e8d54925",
+    "slug": "sproto-gremlins",
+    "name": "Sproto Gremlins",
+    "enabled": true
+  },
+  {
+    "address": "0x8d604ec183903dcd52a3af17dcc52bdf1cd5bc24",
+    "slug": "xcopy-editions",
+    "name": "XCOPY editions 2019-22",
+    "enabled": true
+  },
+  {
+    "address": "0x4e1f41613c9084fdb9e34e11fae9412427480e56",
+    "slug": "terraforms",
+    "name": "Terraforms by Mathcastles",
+    "enabled": true
+  },
+  {
+    "address": "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
+    "slug": "the-eternal-pump-by-dmitri-cherniak",
+    "name": "The Eternal Pump by Dmitri Cherniak",
+    "enabled": true
+  },
+  {
+    "address": "0x99a9b7c1116f9ceeb1652de04d5969cce509b069",
+    "slug": "the-harvest-by-per-kristian-stoveland",
+    "name": "The Harvest by Per Kristian Stoveland",
+    "enabled": true
+  },
+  {
+    "address": "0xa3aee8bce55beea1951ef834b99f3ac60d1abeeb",
+    "slug": "veefriends",
+    "name": "VeeFriends",
+    "enabled": true
+  },
+  {
+    "address": "0x3c72d904a2006c02e4ebdbab32477e9182d9e59d",
+    "slug": "warothys",
+    "name": "Warothys",
+    "enabled": true
+  },
+  {
+    "address": "0x509a050f573be0d5e01a73c3726e17161729558b",
+    "slug": "where-my-vans-go",
+    "name": "Where My Vans Go",
+    "enabled": true
+  },
+  {
+    "address": "0x7a63d17f5a59bca04b6702f461b1f1a1c59b100b",
+    "slug": "winds-of-yawanawa",
+    "name": "Winds of Yawanawa by Yawanawa and Refik Anadol",
+    "enabled": true
+  },
+  {
+    "address": "0xb7f7f6c52f2e2fdb1963eab30438024864c313f6",
+    "slug": "wrapped-cryptopunks",
+    "name": "Wrapped Cryptopunks",
+    "enabled": true
+  },
+  {
+    "address": "0xa3f5998047579334607c47a6a2889bf87a17fc02",
+    "slug": "wrapped-ether-rock",
+    "name": "Wrapped Ether Rock",
+    "enabled": true
+  },
+  {
+    "address": "0x9cf0ab1cc434db83097b7e9c831a764481dec747",
+    "slug": "aligndraw",
+    "name": "alignDRAW",
+    "enabled": true
+  },
+  {
+    "address": "0xa471f4da9b79645f4f5358e102c62f59c1329aa5",
+    "slug": "beef-brothko",
+    "name": "beef brothko",
+    "enabled": true
+  },
+  {
+    "address": "0x79FCDEF22feeD20eDDacbB2587640e45491b757f",
+    "slug": "mfers",
+    "name": "mfer",
+    "enabled": true
+  },
+  {
+    "address": "0xb852c6b5892256c264cc2c888ea462189154d8d7",
+    "slug": "rektguy",
+    "name": "rektguy",
+    "enabled": true
+  },
+  {
+    "address": "0x5137cfb461d24040f5ce6b85d860c47a24f85412",
+    "slug": "reflection-by-van-arman-",
+    "name": "Reflexion by Pindar Van Arman",
+    "enabled": true
+  }
+]
