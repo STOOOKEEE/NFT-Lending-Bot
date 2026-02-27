@@ -188,6 +188,34 @@ export async function deleteOldExpiredOffers(daysOld: number = 30): Promise<numb
   return data?.length || 0;
 }
 
+/** Check if an active (non-expired) offer already exists for this collection/duration/platform */
+export async function hasActiveOffer(
+  marketplace: string,
+  collectionAddress: string,
+  durationDays: number
+): Promise<boolean> {
+  if (!collectionAddress) return false;
+
+  const db = getSupabaseClient();
+
+  const { data, error } = await db
+    .from("lending_offers")
+    .select("id")
+    .eq("marketplace", marketplace)
+    .eq("status", "ACTIVE")
+    .gt("expiration_time", new Date().toISOString())
+    .eq("duration_days", durationDays)
+    .eq("collection_address", collectionAddress.toLowerCase())
+    .limit(1);
+
+  if (error) {
+    console.error("[lending-db] hasActiveOffer error:", error.message);
+    return false;
+  }
+
+  return (data?.length ?? 0) > 0;
+}
+
 export async function cleanupExpiredOffers(deleteAfterDays: number = 30): Promise<{ marked: number; deleted: number }> {
   const marked = await markExpiredOffers();
   const deleted = await deleteOldExpiredOffers(deleteAfterDays);

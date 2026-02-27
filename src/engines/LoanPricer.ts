@@ -58,7 +58,7 @@ export const DEFAULT_CONFIG: PricingConfig = {
   minSpreadBelowBest: 0.01,
 };
 
-export const GONDI_DURATIONS = [7, 15, 30];
+export const GONDI_DURATIONS = [7, 15, 30, 60];
 
 export function calculateMaxLTV(spread: number, annualizedVolatility: number): number {
   const BASE_MAX_LTV = 0.80;

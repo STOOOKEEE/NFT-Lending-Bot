@@ -1,36 +1,29 @@
 /**
  * Strategy.ts - Décide quelles offres envoyer
  *
- * Principe:
- * 1. Récupère prix et volatilité depuis DB
- * 2. Récupère meilleures offres Gondi depuis DB
- * 3. Utilise LoanPricer pour calculer notre pricing compétitif
- * 4. Recommande les offres où on peut compétir
+ * Refactoré pour être platform-agnostic:
+ * - Reçoit un tableau de LendingPlatform[]
+ * - Itère sur chaque plateforme pour obtenir les offres marché
+ * - Génère des recommandations uniformes (Type 1 + Type 2)
  *
- * Philosophie:
- * - Maximiser le nombre d'offres (multi-durée, multi-type)
- * - Accepter que certaines revertent (pas de fund manager)
- * - Déployer la liquidité au max
- *
- * Pour chaque (collection, durée), 2 types d'offres:
+ * Pour chaque (collection, plateforme, durée), 2 types d'offres:
  *   Type 1 "best_apr": undercut la meilleure APR du marché
  *   Type 2 "best_principal": matcher le plus gros montant, APR compétitive
  */
 
 import { getLatestFloorPrice } from "../utils/price-db";
 import { calculateVolatilityFromDb, annualizeVolatility } from "../engines/volatility";
-import { getOffersByCollection } from "../utils/gondi-db";
-import { getBlurMarketBySlug } from "../utils/blur-db";
-import { isBlurSupported, roundToBlurTick, BLUR_LENDING_COLLECTIONS } from "../adapters/BlurAdapter";
 import { findCollectionBySlug } from "../utils/collections-loader";
 import {
   priceLoan,
   calculateMaxLTV,
+  GONDI_DURATIONS,
   type MarketData,
   type PricingConfig,
   DEFAULT_CONFIG,
 } from "../engines/LoanPricer";
-import { getEthUsdPrice, toETHEquivalent } from "../utils/helpers";
+import { LendingPlatform, PlatformMarketOffer } from "../adapters/LendingPlatform";
+import { roundToBlurTick } from "../adapters/BlurPlatform";
 
 // ==================== TYPES ====================
 
@@ -38,7 +31,7 @@ export interface StrategyRecommendation {
   collection: string;
   shouldSendOffer: boolean;
   reason: string;
-  platform: "gondi" | "blur";
+  platform: string;
   offerDetails?: {
     loanAmount: number;
     durationDays: number;
@@ -76,20 +69,61 @@ export const STRATEGY_CONFIG: PricingConfig = {
 
 const MIN_VOLATILITY_DATA_DAYS = 3;
 
-/** APR max 80% — safety cap */
+/** APR max 80% - safety cap */
 const MAX_APR_CAP = 0.8;
+
+/** When no competitor exists: minimum APR scaled by duration.
+ *  7d → 25%, 15d → 27%, 30d → 32%, 60d → 41% */
+const NO_COMPETITOR_BASE_APR = 0.25;
+const NO_COMPETITOR_APR_PER_DAY = 0.003;
+
+function noCompetitorMinApr(durationDays: number): number {
+  return NO_COMPETITOR_BASE_APR + NO_COMPETITOR_APR_PER_DAY * (durationDays - 7);
+}
 
 /** Blur: higher LTV allowed since loans are rolling (lender can exit anytime) */
 const BLUR_MAX_LTV = 0.80;
 
+// ==================== PLATFORM-SPECIFIC CONFIG ====================
+
+interface PlatformConfig {
+  maxLtv: number;
+  skipViabilityCheck: boolean;
+  roundAmount: (amount: number) => number;
+  minAmount: number;
+  /** Minimum APR the platform accepts (decimal). Gondi rejects < 1%. */
+  minAprDecimal: number;
+}
+
+function getPlatformConfig(platformName: string): PlatformConfig {
+  if (platformName === "blur") {
+    return {
+      maxLtv: BLUR_MAX_LTV,
+      skipViabilityCheck: true, // Rolling loans allow exit
+      roundAmount: roundToBlurTick,
+      minAmount: 0.1,
+      minAprDecimal: 0.01, // 1%
+    };
+  }
+  // Default (Gondi and future platforms)
+  return {
+    maxLtv: 0, // Will be calculated from spread + vol
+    skipViabilityCheck: false,
+    roundAmount: (v: number) => v,
+    minAmount: 0,
+    minAprDecimal: 0.01, // Gondi rejects < 100 bps (1%)
+  };
+}
+
 // ==================== ANALYSE D'UNE COLLECTION ====================
 
 /**
- * Analyse une collection et retourne TOUTES les offres possibles
- * (Type 1 + Type 2, pour chaque durée)
+ * Analyse une collection sur TOUTES les plateformes fournies
+ * et retourne les offres possibles (Type 1 + Type 2, par plateforme × durée)
  */
 export async function analyzeCollection(
   slug: string,
+  platforms: LendingPlatform[],
   config: PricingConfig = STRATEGY_CONFIG
 ): Promise<StrategyRecommendation[]> {
   const results: StrategyRecommendation[] = [];
@@ -104,7 +138,7 @@ export async function analyzeCollection(
         collection: slug,
         shouldSendOffer: false,
         reason: "No price data in DB",
-        platform: "gondi",
+        platform: "none",
       });
       return results;
     }
@@ -120,30 +154,16 @@ export async function analyzeCollection(
         collection: slug,
         shouldSendOffer: false,
         reason: `Not enough volatility data (need ${MIN_VOLATILITY_DATA_DAYS}+ days)`,
-        platform: "gondi",
+        platform: "none",
       });
       return results;
     }
 
     const ewmaAnnualized = annualizeVolatility(volatilityResult.ewma);
+    const dynamicMaxLtv = calculateMaxLTV(spread, ewmaAnnualized);
 
-    // 3. Récupérer les meilleures offres Gondi depuis DB
-    const gondiOffers = await getOffersByCollection(slug);
-
-    if (gondiOffers.length === 0) {
-      results.push({
-        collection: slug,
-        shouldSendOffer: false,
-        reason: "No Gondi offers found for this collection",
-        platform: "gondi",
-      });
-      return results;
-    }
-
-    const ethUsdPrice = await getEthUsdPrice();
-    const maxLtv = calculateMaxLTV(spread, ewmaAnnualized);
-
-    console.log(`  [${slug}] Floor ${floor.toFixed(4)} | Bid ${bid.toFixed(4)} | Spread ${pct(spread)} | Vol(EWMA) ${pct(ewmaAnnualized)} | maxLTV ${pct(maxLtv)} | ${gondiOffers.length} duration(s) | ETH=$${ethUsdPrice.toFixed(0)}`);
+    const collectionConfig = findCollectionBySlug(slug);
+    const collectionAddress = collectionConfig?.address || "";
 
     const marketData: MarketData = {
       floorPrice: floor,
@@ -153,189 +173,246 @@ export async function analyzeCollection(
       spread,
     };
 
-    // 4. Pour chaque durée, générer Type 1 + Type 2
-    for (const offer of gondiOffers) {
-      const durationDays = offer.duration_days;
+    console.log(`  [${slug}] Floor ${floor.toFixed(4)} | Bid ${bid.toFixed(4)} | Spread ${pct(spread)} | Vol(EWMA) ${pct(ewmaAnnualized)} | maxLTV ${pct(dynamicMaxLtv)}`);
 
-      // ---- TYPE 1: Best APR ----
-      // Se cale sur la meilleure offre APR du marché
-      const bestAprDecimal = offer.best_apr_percent / 100; // % → decimal
-      const bestAprAmount = toETHEquivalent(offer.best_apr_amount, offer.best_apr_currency || "WETH", ethUsdPrice);
-      const type1Apr = bestAprDecimal - config.minSpreadBelowBest;
-      const type1Amount = bestAprAmount;
-      const type1Ltv = floor > 0 ? type1Amount / floor : 0;
-      const type1CurrencyNote = (offer.best_apr_currency || "WETH") !== "WETH" ? ` (${offer.best_apr_amount.toFixed(2)} ${offer.best_apr_currency})` : "";
-
-      if (type1Ltv <= maxLtv && type1Apr > 0) {
-        const pricing = priceLoan(marketData, type1Amount, durationDays, config);
-        const isProfitable = pricing.minApr < type1Apr;
-        const finalApr = Math.min(type1Apr, MAX_APR_CAP);
-
-        if (isProfitable && pricing.isViable) {
-          const expectedProfit = type1Amount * finalApr * (durationDays / 365);
-          console.log(`  [${slug}] SEND T1 ${durationDays}d | ${type1Amount.toFixed(4)} ETH${type1CurrencyNote} @ ${pct(finalApr)} | minApr ${pct(pricing.minApr)} | LTV ${pct(type1Ltv)}`);
-
-          results.push({
-            collection: slug,
-            shouldSendOffer: true,
-            platform: "gondi",
-            reason: `T1 ${pct(finalApr)} APR vs market ${pct(bestAprDecimal)} (minApr ${pct(pricing.minApr)})`,
-            offerDetails: {
-              loanAmount: type1Amount,
-              durationDays,
-              recommendedApr: finalApr,
-              competitiveApr: finalApr,
-              expectedProfit,
-              ltv: type1Ltv,
-              offerType: "best_apr",
-            },
-            marketContext: {
-              floorPrice: floor,
-              volatility: ewmaAnnualized,
-              bestMarketApr: bestAprDecimal,
-              bestMarketAmount: bestAprAmount,
-              bestMarketDuration: durationDays,
-            },
-          });
-        } else {
-          const skipReason = !isProfitable
-            ? `minApr ${pct(pricing.minApr)} > ourApr ${pct(type1Apr)}`
-            : `not viable (risk ${pricing.riskScore}/100)`;
-          console.log(`  [${slug}] SKIP T1 ${durationDays}d | ${skipReason} | ${type1Amount.toFixed(4)} ETH${type1CurrencyNote} | LTV ${pct(type1Ltv)} | Market APR ${pct(bestAprDecimal)}`);
-        }
-      } else if (type1Ltv > maxLtv) {
-        console.log(`  [${slug}] SKIP T1 ${durationDays}d | LTV ${pct(type1Ltv)} > max ${pct(maxLtv)} | ${type1Amount.toFixed(4)} ETH${type1CurrencyNote}`);
+    // 3. Pour chaque plateforme, obtenir les offres marché et générer des recommandations
+    for (const platform of platforms) {
+      // Check if this platform supports the collection
+      if (collectionAddress && !platform.isCollectionSupported(collectionAddress)) {
+        continue;
       }
 
-      // ---- TYPE 2: Best Principal ----
-      // Se cale sur la meilleure offre par montant
-      const bestPrincipalAmount = toETHEquivalent(offer.best_principal_amount, offer.best_principal_currency || "WETH", ethUsdPrice);
-      const bestPrincipalApr = offer.best_principal_apr / 100; // % → decimal
-      const type2Amount = bestPrincipalAmount;
-      const type2Apr = bestPrincipalApr - config.minSpreadBelowBest;
-      const type2Ltv = floor > 0 ? type2Amount / floor : 0;
-      const type2CurrencyNote = (offer.best_principal_currency || "WETH") !== "WETH" ? ` (${offer.best_principal_amount.toFixed(2)} ${offer.best_principal_currency})` : "";
+      const platformConfig = getPlatformConfig(platform.name);
+      const effectiveMaxLtv = platformConfig.maxLtv > 0 ? platformConfig.maxLtv : dynamicMaxLtv;
 
-      // Skip Type 2 if it's identical to Type 1 (same amount and APR)
-      const isDuplicate = Math.abs(type2Amount - type1Amount) < 0.001 && Math.abs(type2Apr - type1Apr) < 0.001;
-
-      if (!isDuplicate && type2Ltv <= maxLtv && type2Apr > 0) {
-        const pricing = priceLoan(marketData, type2Amount, durationDays, config);
-        const isProfitable = pricing.minApr < type2Apr;
-        const finalApr = Math.min(type2Apr, MAX_APR_CAP);
-
-        if (isProfitable && pricing.isViable) {
-          const expectedProfit = type2Amount * finalApr * (durationDays / 365);
-          console.log(`  [${slug}] SEND T2 ${durationDays}d | ${type2Amount.toFixed(4)} ETH${type2CurrencyNote} @ ${pct(finalApr)} | minApr ${pct(pricing.minApr)} | LTV ${pct(type2Ltv)}`);
-
-          results.push({
-            collection: slug,
-            shouldSendOffer: true,
-            platform: "gondi",
-            reason: `T2 ${pct(finalApr)} APR, principal ${type2Amount.toFixed(4)} ETH vs market ${bestPrincipalAmount.toFixed(4)} ETH`,
-            offerDetails: {
-              loanAmount: type2Amount,
-              durationDays,
-              recommendedApr: finalApr,
-              competitiveApr: finalApr,
-              expectedProfit,
-              ltv: type2Ltv,
-              offerType: "best_principal",
-            },
-            marketContext: {
-              floorPrice: floor,
-              volatility: ewmaAnnualized,
-              bestMarketApr: bestPrincipalApr,
-              bestMarketAmount: bestPrincipalAmount,
-              bestMarketDuration: durationDays,
-            },
-          });
-        } else {
-          const skipReason = !isProfitable
-            ? `minApr ${pct(pricing.minApr)} > ourApr ${pct(type2Apr)}`
-            : `not viable (risk ${pricing.riskScore}/100)`;
-          console.log(`  [${slug}] SKIP T2 ${durationDays}d | ${skipReason} | ${type2Amount.toFixed(4)} ETH${type2CurrencyNote} | LTV ${pct(type2Ltv)} | Market APR ${pct(bestPrincipalApr)}`);
-        }
-      } else if (isDuplicate) {
-        console.log(`  [${slug}] SKIP T2 ${durationDays}d | duplicate of T1`);
+      let marketOffers: PlatformMarketOffer[];
+      try {
+        marketOffers = await platform.getMarketOffers(slug);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.log(`  [${slug}] [${platform.name}] Error fetching market: ${msg}`);
+        continue;
       }
-    }
 
-    // ---- BLUR OFFERS ----
-    // Check if this collection is supported on Blur Blend
-    const collectionConfig = findCollectionBySlug(slug);
-    const collectionAddress = collectionConfig?.address || "";
+      if (marketOffers.length === 0) {
+        // No competitors at all — publish standalone offers on all durations
+        const targetDurations = platform.name === "blur" ? [30] : GONDI_DURATIONS;
+        const defaultLtv = effectiveMaxLtv * 0.6;
+        const defaultAmount = platformConfig.roundAmount(floor * defaultLtv);
 
-    if (collectionAddress && isBlurSupported(collectionAddress)) {
-      // Use Blur's own slug (e.g., "pudgy-penguins") not collections.json slug ("pudgypenguins")
-      const blurSlug = BLUR_LENDING_COLLECTIONS[collectionAddress.toLowerCase()];
-      const blurData = await getBlurMarketBySlug(blurSlug);
+        if (defaultAmount >= platformConfig.minAmount) {
+          for (const dur of targetDurations) {
+            const pricing = priceLoan(marketData, defaultAmount, dur, config);
+            const standaloneApr = Math.max(Math.min(pricing.recommendedApr, MAX_APR_CAP), noCompetitorMinApr(dur));
 
-      if (blurData && blurData.best_apr_bps > 0) {
-        // Blur: rolling loans (no fixed duration), lender can exit anytime
-        // Use higher LTV than Gondi since we can monitor and exit if floor drops
-        const blurDurationDays = 30; // reference for pricing only
-        const bestBlurAprDecimal = blurData.best_apr_bps / 10000; // bps → decimal
-        const blurOfferApr = bestBlurAprDecimal - 0.01; // undercut by 1%
-        const blurAmount = roundToBlurTick(floor * BLUR_MAX_LTV);
-        const blurLtv = floor > 0 ? blurAmount / floor : 0;
+            if (pricing.isViable || platformConfig.skipViabilityCheck) {
+              const expectedProfit = defaultAmount * standaloneApr * (dur / 365);
+              console.log(`  [${slug}] [${platform.name}] SEND standalone ${dur}d | ${defaultAmount.toFixed(4)} ETH @ ${pct(standaloneApr)} (no competitors)`);
 
-        if (blurAmount >= 0.1 && blurOfferApr > 0 && blurLtv <= BLUR_MAX_LTV) {
-          const pricing = priceLoan(marketData, blurAmount, blurDurationDays, config);
-          const isProfitable = pricing.minApr < blurOfferApr;
-          const finalApr = Math.min(blurOfferApr, MAX_APR_CAP);
-
-          // Blur: only check profitability, skip isViable (rolling loans allow exit)
-          if (isProfitable) {
-            const expectedProfit = blurAmount * finalApr * (blurDurationDays / 365);
-            const aprBps = Math.round(finalApr * 10000);
-            console.log(`  [${slug}] SEND BLUR | ${blurAmount.toFixed(1)} ETH @ ${aprBps} bps | minApr ${pct(pricing.minApr)} | LTV ${pct(blurLtv)} | risk ${pricing.riskScore}/100`);
-
-            results.push({
-              collection: slug,
-              shouldSendOffer: true,
-              platform: "blur",
-              reason: `Blur ${aprBps} bps vs market ${blurData.best_apr_bps} bps`,
-              offerDetails: {
-                loanAmount: blurAmount,
-                durationDays: blurDurationDays,
-                recommendedApr: finalApr,
-                competitiveApr: finalApr,
-                expectedProfit,
-                ltv: blurLtv,
-                offerType: "best_apr",
-                collectionAddress,
-              },
-              marketContext: {
-                floorPrice: floor,
-                volatility: ewmaAnnualized,
-                bestMarketApr: bestBlurAprDecimal,
-                bestMarketAmount: blurData.best_offer_amount_eth,
-                bestMarketDuration: blurDurationDays,
-              },
-            });
-          } else {
-            console.log(`  [${slug}] SKIP BLUR | minApr ${pct(pricing.minApr)} > ${pct(blurOfferApr)} | ${blurAmount.toFixed(1)} ETH | LTV ${pct(blurLtv)}`);
+              results.push({
+                collection: slug,
+                shouldSendOffer: true,
+                platform: platform.name,
+                reason: `Standalone ${pct(standaloneApr)} APR (no competitors, ${dur}d)`,
+                offerDetails: {
+                  loanAmount: defaultAmount,
+                  durationDays: dur,
+                  recommendedApr: standaloneApr,
+                  competitiveApr: standaloneApr,
+                  expectedProfit,
+                  ltv: defaultLtv,
+                  offerType: "best_apr",
+                  collectionAddress,
+                },
+                marketContext: {
+                  floorPrice: floor,
+                  volatility: ewmaAnnualized,
+                  bestMarketApr: 0,
+                  bestMarketAmount: 0,
+                  bestMarketDuration: dur,
+                },
+              });
+            }
           }
-        } else if (blurAmount < 0.1) {
-          console.log(`  [${slug}] SKIP BLUR | amount too small (${blurAmount.toFixed(3)} ETH < 0.1)`);
+        }
+        continue;
+      }
+
+      console.log(`  [${slug}] [${platform.name}] ${marketOffers.length} market offer(s)`);
+
+      for (const mktOffer of marketOffers) {
+        const durationDays = mktOffer.durationDays;
+
+        // ---- TYPE 1: Best APR ----
+        const type1Apr = Math.max(mktOffer.bestAprDecimal - config.minSpreadBelowBest, platformConfig.minAprDecimal);
+        let type1Amount = mktOffer.bestAprAmount;
+        type1Amount = platformConfig.roundAmount(type1Amount);
+
+        if (type1Amount >= platformConfig.minAmount) {
+          const type1Ltv = floor > 0 ? type1Amount / floor : 0;
+
+          if (type1Ltv <= effectiveMaxLtv && type1Apr > 0) {
+            const pricing = priceLoan(marketData, type1Amount, durationDays, config);
+            const isProfitable = pricing.minApr < type1Apr;
+            const isViable = platformConfig.skipViabilityCheck || pricing.isViable;
+            const finalApr = Math.min(type1Apr, MAX_APR_CAP);
+
+            if (isProfitable && isViable) {
+              const expectedProfit = type1Amount * finalApr * (durationDays / 365);
+              console.log(`  [${slug}] [${platform.name}] SEND T1 ${durationDays}d | ${type1Amount.toFixed(4)} ETH @ ${pct(finalApr)} | minApr ${pct(pricing.minApr)} | LTV ${pct(type1Ltv)}`);
+
+              results.push({
+                collection: slug,
+                shouldSendOffer: true,
+                platform: platform.name,
+                reason: `T1 ${pct(finalApr)} APR vs market ${pct(mktOffer.bestAprDecimal)} (minApr ${pct(pricing.minApr)})`,
+                offerDetails: {
+                  loanAmount: type1Amount,
+                  durationDays,
+                  recommendedApr: finalApr,
+                  competitiveApr: finalApr,
+                  expectedProfit,
+                  ltv: type1Ltv,
+                  offerType: "best_apr",
+                  collectionAddress: mktOffer.collectionAddress || collectionAddress,
+                },
+                marketContext: {
+                  floorPrice: floor,
+                  volatility: ewmaAnnualized,
+                  bestMarketApr: mktOffer.bestAprDecimal,
+                  bestMarketAmount: mktOffer.bestAprAmount,
+                  bestMarketDuration: durationDays,
+                },
+              });
+            } else {
+              const skipReason = !isProfitable
+                ? `minApr ${pct(pricing.minApr)} > ourApr ${pct(type1Apr)}`
+                : `not viable (risk ${pricing.riskScore}/100)`;
+              console.log(`  [${slug}] [${platform.name}] SKIP T1 ${durationDays}d | ${skipReason}`);
+            }
+          } else if (type1Ltv > effectiveMaxLtv) {
+            console.log(`  [${slug}] [${platform.name}] SKIP T1 ${durationDays}d | LTV ${pct(type1Ltv)} > max ${pct(effectiveMaxLtv)}`);
+          }
+        }
+
+        // ---- TYPE 2: Best Principal ----
+        // Skip for Blur (rolling loans, only one offer type makes sense)
+        if (platform.name === "blur") continue;
+
+        const type2Amount = platformConfig.roundAmount(mktOffer.bestPrincipalAmount);
+        const type2Apr = Math.max(mktOffer.bestPrincipalAprDecimal - config.minSpreadBelowBest, platformConfig.minAprDecimal);
+
+        // Skip if duplicate of Type 1
+        const isDuplicate = Math.abs(type2Amount - type1Amount) < 0.001 && Math.abs(type2Apr - type1Apr) < 0.001;
+
+        if (!isDuplicate && type2Amount >= platformConfig.minAmount && type2Apr > 0) {
+          const type2Ltv = floor > 0 ? type2Amount / floor : 0;
+
+          if (type2Ltv <= effectiveMaxLtv) {
+            const pricing = priceLoan(marketData, type2Amount, durationDays, config);
+            const isProfitable = pricing.minApr < type2Apr;
+            const isViable = platformConfig.skipViabilityCheck || pricing.isViable;
+            const finalApr = Math.min(type2Apr, MAX_APR_CAP);
+
+            if (isProfitable && isViable) {
+              const expectedProfit = type2Amount * finalApr * (durationDays / 365);
+              console.log(`  [${slug}] [${platform.name}] SEND T2 ${durationDays}d | ${type2Amount.toFixed(4)} ETH @ ${pct(finalApr)} | minApr ${pct(pricing.minApr)} | LTV ${pct(type2Ltv)}`);
+
+              results.push({
+                collection: slug,
+                shouldSendOffer: true,
+                platform: platform.name,
+                reason: `T2 ${pct(finalApr)} APR, principal ${type2Amount.toFixed(4)} ETH`,
+                offerDetails: {
+                  loanAmount: type2Amount,
+                  durationDays,
+                  recommendedApr: finalApr,
+                  competitiveApr: finalApr,
+                  expectedProfit,
+                  ltv: type2Ltv,
+                  offerType: "best_principal",
+                  collectionAddress: mktOffer.collectionAddress || collectionAddress,
+                },
+                marketContext: {
+                  floorPrice: floor,
+                  volatility: ewmaAnnualized,
+                  bestMarketApr: mktOffer.bestPrincipalAprDecimal,
+                  bestMarketAmount: mktOffer.bestPrincipalAmount,
+                  bestMarketDuration: durationDays,
+                },
+              });
+            } else {
+              const skipReason = !isProfitable
+                ? `minApr ${pct(pricing.minApr)} > ourApr ${pct(type2Apr)}`
+                : `not viable (risk ${pricing.riskScore}/100)`;
+              console.log(`  [${slug}] [${platform.name}] SKIP T2 ${durationDays}d | ${skipReason}`);
+            }
+          }
+        } else if (isDuplicate) {
+          console.log(`  [${slug}] [${platform.name}] SKIP T2 ${durationDays}d | duplicate of T1`);
+        }
+      }
+
+      // ---- Standalone offers for durations with no competitors ----
+      // Durations depend on platform: Gondi uses GONDI_DURATIONS, Blur uses [30]
+      const targetDurations = platform.name === "blur" ? [30] : GONDI_DURATIONS;
+      const coveredDurations = new Set(marketOffers.map(o => o.durationDays));
+
+      for (const dur of targetDurations) {
+        if (coveredDurations.has(dur)) continue;
+
+        const standaloneLtv = effectiveMaxLtv * 0.6;
+        const standaloneAmount = platformConfig.roundAmount(floor * standaloneLtv);
+
+        if (standaloneAmount < platformConfig.minAmount) continue;
+
+        const pricing = priceLoan(marketData, standaloneAmount, dur, config);
+        const standaloneApr = Math.max(Math.min(pricing.recommendedApr, MAX_APR_CAP), noCompetitorMinApr(dur));
+
+        if (pricing.isViable || platformConfig.skipViabilityCheck) {
+          const expectedProfit = standaloneAmount * standaloneApr * (dur / 365);
+          console.log(`  [${slug}] [${platform.name}] SEND standalone ${dur}d | ${standaloneAmount.toFixed(4)} ETH @ ${pct(standaloneApr)} (no competitors on ${dur}d)`);
+
+          results.push({
+            collection: slug,
+            shouldSendOffer: true,
+            platform: platform.name,
+            reason: `Standalone ${pct(standaloneApr)} APR (no competitors on ${dur}d)`,
+            offerDetails: {
+              loanAmount: standaloneAmount,
+              durationDays: dur,
+              recommendedApr: standaloneApr,
+              competitiveApr: standaloneApr,
+              expectedProfit,
+              ltv: standaloneLtv,
+              offerType: "best_apr",
+              collectionAddress,
+            },
+            marketContext: {
+              floorPrice: floor,
+              volatility: ewmaAnnualized,
+              bestMarketApr: 0,
+              bestMarketAmount: 0,
+              bestMarketDuration: dur,
+            },
+          });
         }
       }
     }
 
-    // Si aucune offre viable, retourner un skip
+    // Si aucune offre viable sur aucune plateforme
     if (results.length === 0) {
       results.push({
         collection: slug,
         shouldSendOffer: false,
-        platform: "gondi",
+        platform: "none",
         reason: "Cannot compete on any platform",
         marketContext: {
           floorPrice: floor,
           volatility: ewmaAnnualized,
-          bestMarketApr: gondiOffers[0].best_apr_percent / 100,
-          bestMarketAmount: gondiOffers[0].best_apr_amount,
-          bestMarketDuration: gondiOffers[0].duration_days,
+          bestMarketApr: 0,
+          bestMarketAmount: 0,
+          bestMarketDuration: 0,
         },
       });
     }
@@ -346,7 +423,7 @@ export async function analyzeCollection(
     results.push({
       collection: slug,
       shouldSendOffer: false,
-      platform: "gondi",
+      platform: "none",
       reason: `Error: ${msg}`,
     });
     return results;
@@ -356,23 +433,24 @@ export async function analyzeCollection(
 // ==================== ANALYSE MULTI-COLLECTIONS ====================
 
 /**
- * Analyse plusieurs collections et génère un rapport
+ * Analyse plusieurs collections sur toutes les plateformes
  */
 export async function runStrategy(
   collectionSlugs: string[],
+  platforms: LendingPlatform[],
   config: PricingConfig = STRATEGY_CONFIG
 ): Promise<StrategyReport> {
   const timestamp = new Date().toISOString();
   const allRecommendations: StrategyRecommendation[] = [];
 
   console.log(`\n${"=".repeat(70)}`);
-  console.log(`🎯 Running Strategy - ${collectionSlugs.length} collections`);
+  console.log(`🎯 Running Strategy - ${collectionSlugs.length} collections, ${platforms.length} platform(s) [${platforms.map(p => p.name).join(", ")}]`);
   console.log("=".repeat(70));
 
   for (const slug of collectionSlugs) {
     console.log(`\n📊 Analyzing ${slug}...`);
 
-    const recommendations = await analyzeCollection(slug, config);
+    const recommendations = await analyzeCollection(slug, platforms, config);
     allRecommendations.push(...recommendations);
 
     const sends = recommendations.filter(r => r.shouldSendOffer);
@@ -383,7 +461,7 @@ export async function runStrategy(
       for (const rec of sends) {
         if (rec.offerDetails) {
           const t = rec.offerDetails.offerType === "best_apr" ? "T1" : "T2";
-          console.log(`     ${t} ${rec.offerDetails.durationDays}d: ${rec.offerDetails.loanAmount.toFixed(4)} ETH @ ${(rec.offerDetails.competitiveApr * 100).toFixed(2)}%`);
+          console.log(`     [${rec.platform}] ${t} ${rec.offerDetails.durationDays}d: ${rec.offerDetails.loanAmount.toFixed(4)} ETH @ ${(rec.offerDetails.competitiveApr * 100).toFixed(2)}%`);
         }
       }
     }
@@ -412,16 +490,10 @@ export async function runStrategy(
 
 // ==================== HELPERS ====================
 
-/**
- * Filtre uniquement les recommandations qui doivent être envoyées
- */
 export function getOffersToSend(report: StrategyReport): StrategyRecommendation[] {
   return report.collections.filter(c => c.shouldSendOffer);
 }
 
-/**
- * Formatte une recommandation pour affichage concis (Telegram)
- */
 export function formatRecommendationShort(rec: StrategyRecommendation): string {
   if (!rec.shouldSendOffer || !rec.offerDetails) {
     return `${rec.collection}: SKIP - ${rec.reason}`;
@@ -431,7 +503,7 @@ export function formatRecommendationShort(rec: StrategyRecommendation): string {
   const t = offerType === "best_apr" ? "T1" : "T2";
 
   return [
-    `${rec.collection} [${t}]`,
+    `${rec.collection} [${rec.platform}/${t}]`,
     `${loanAmount.toFixed(3)} ETH @ ${(competitiveApr * 100).toFixed(2)}%`,
     `${durationDays}d | Profit ${expectedProfit.toFixed(4)} ETH`,
   ].join(" | ");

@@ -11,6 +11,8 @@
 
 import "dotenv/config";
 import { runStrategy, formatRecommendationShort, getOffersToSend } from "../strategy/Strategy";
+import { GondiPlatform } from "../adapters/GondiPlatform";
+import { BlurPlatform } from "../adapters/BlurPlatform";
 
 async function testStrategy() {
   console.log("🧪 Test Strategy");
@@ -30,8 +32,11 @@ async function testStrategy() {
   console.log(`\n📋 Testing with ${testCollections.length} collections:`);
   testCollections.forEach(c => console.log(`   - ${c}`));
 
+  // Créer les plateformes (sans init — lecture seule pour les tests)
+  const platforms = [new GondiPlatform(), new BlurPlatform()];
+
   // Exécuter la stratégie
-  const report = await runStrategy(testCollections);
+  const report = await runStrategy(testCollections, platforms);
 
   // Afficher le résumé
   console.log(`\n\n${"=".repeat(70)}`);

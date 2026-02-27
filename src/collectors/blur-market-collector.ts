@@ -8,7 +8,7 @@
  * Donne pour chaque collection: meilleur APR, montant, liquidité totale, floor
  */
 
-import { BLUR_LENDING_COLLECTIONS } from "../adapters/BlurAdapter";
+import { BLUR_LENDING_COLLECTIONS } from "../config/blur-collections";
 
 // Re-export for backwards compatibility
 export const BLUR_SUPPORTED_COLLECTIONS = BLUR_LENDING_COLLECTIONS;
