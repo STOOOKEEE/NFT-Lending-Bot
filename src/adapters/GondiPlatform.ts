@@ -162,7 +162,7 @@ export class GondiPlatform extends LendingPlatform {
   private account: Account | null = null;
   private initialized = false;
   /** Cache of collection offer steps (collectionId → steps) */
-  private stepsCache = new Map<number, { wethStep: bigint; aprBpsStep: bigint }>();
+  private stepsCache = new Map<number, { wethStep: bigint; aprBpsStep: bigint; origFeeBpsStep: bigint }>();
 
   async init(): Promise<void> {
     const privateKey = process.env.WALLET_PRIVATE_KEY;
@@ -319,17 +319,22 @@ export class GondiPlatform extends LendingPlatform {
       // Check and approve WETH
       await this.checkAndApproveWeth(capacityWei);
 
-      // Compute origination fee (0.5% of loan, min $1)
+      // Compute origination fee (0.5% of loan, min $1), rounded to origFeeBpsStep
       const ethPrice = await getEthUsdPrice();
       const loanAmountUsd = amountEth * ethPrice;
       const feeUsd = calculateOriginationFeeUsd(loanAmountUsd);
-      const feeWei = ethToWei(feeUsd / ethPrice);
+      let feeBps = BigInt(Math.round((feeUsd / loanAmountUsd) * 10000));
+      if (steps) {
+        feeBps = roundToStep(feeBps, steps.origFeeBpsStep);
+        if (feeBps <= 0n) feeBps = steps.origFeeBpsStep;
+      }
+      const feeWei = principalWei * feeBps / 10000n;
 
       // Send offer
       const roundedAmountEth = parseFloat(formatEther(principalWei));
       const roundedAprPercent = Number(bps) / 100;
       const feeEth = parseFloat(formatEther(feeWei));
-      console.log(`  [gondi] Sending: ${slug} | ${roundedAmountEth} ETH | ${roundedAprPercent}% | ${durationDays}d | fee ${feeEth.toFixed(6)} ETH (~$${feeUsd.toFixed(2)}) | collectionId=${collectionId}`);
+      console.log(`  [gondi] Sending: ${slug} | ${roundedAmountEth} ETH | ${roundedAprPercent}% | ${durationDays}d | fee ${feeEth.toFixed(6)} ETH (${feeBps} bps, ~$${feeUsd.toFixed(2)}) | collectionId=${collectionId}`);
       const gondiOffer = await this.gondi!.makeCollectionOffer({
         collectionId,
         principalAddress: WETH_ADDRESS,
@@ -505,15 +510,15 @@ export class GondiPlatform extends LendingPlatform {
 
   // ==================== PRIVATE HELPERS ====================
 
-  private async getCollectionSteps(collectionId: number): Promise<{ wethStep: bigint; aprBpsStep: bigint } | null> {
+  private async getCollectionSteps(collectionId: number): Promise<{ wethStep: bigint; aprBpsStep: bigint; origFeeBpsStep: bigint } | null> {
     const cached = this.stepsCache.get(collectionId);
     if (cached) return cached;
 
     try {
       const result = await this.gondi!.collectionStepsById({ collectionId });
-      const steps = { wethStep: result.wethStep, aprBpsStep: result.aprBpsStep };
+      const steps = { wethStep: result.wethStep, aprBpsStep: result.aprBpsStep, origFeeBpsStep: result.origFeeBpsStep };
       this.stepsCache.set(collectionId, steps);
-      console.log(`  [gondi] Steps for collection ${collectionId}: wethStep=${result.wethStep}, aprBpsStep=${result.aprBpsStep}`);
+      console.log(`  [gondi] Steps for collection ${collectionId}: wethStep=${result.wethStep}, aprBpsStep=${result.aprBpsStep}, origFeeBpsStep=${result.origFeeBpsStep}`);
       return steps;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
