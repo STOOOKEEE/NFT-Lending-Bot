@@ -60,7 +60,11 @@ const WETH_ABI = [
 ] as const;
 
 const DEFAULT_EXPIRATION_MINUTES = 30;
-const ORIGINATION_FEE_USD = 1;
+
+/** Origination fee: 0.5% of loan amount in USD, minimum $1 */
+function calculateOriginationFeeUsd(loanAmountUsd: number): number {
+  return Math.max(1, loanAmountUsd * 0.005);
+}
 
 // ==================== INTERNAL TYPES ====================
 
@@ -315,18 +319,17 @@ export class GondiPlatform extends LendingPlatform {
       // Check and approve WETH
       await this.checkAndApproveWeth(capacityWei);
 
-      // Compute origination fee (~$1 in ETH)
+      // Compute origination fee (0.5% of loan, min $1)
       const ethPrice = await getEthUsdPrice();
-      let feeWei = ethToWei(ORIGINATION_FEE_USD / ethPrice);
-      if (steps) {
-        feeWei = roundToStep(feeWei, steps.wethStep);
-      }
+      const loanAmountUsd = amountEth * ethPrice;
+      const feeUsd = calculateOriginationFeeUsd(loanAmountUsd);
+      const feeWei = ethToWei(feeUsd / ethPrice);
 
       // Send offer
       const roundedAmountEth = parseFloat(formatEther(principalWei));
       const roundedAprPercent = Number(bps) / 100;
       const feeEth = parseFloat(formatEther(feeWei));
-      console.log(`  [gondi] Sending: ${slug} | ${roundedAmountEth} ETH | ${roundedAprPercent}% | ${durationDays}d | fee ${feeEth.toFixed(6)} ETH (~$${ORIGINATION_FEE_USD}) | collectionId=${collectionId}`);
+      console.log(`  [gondi] Sending: ${slug} | ${roundedAmountEth} ETH | ${roundedAprPercent}% | ${durationDays}d | fee ${feeEth.toFixed(6)} ETH (~$${feeUsd.toFixed(2)}) | collectionId=${collectionId}`);
       const gondiOffer = await this.gondi!.makeCollectionOffer({
         collectionId,
         principalAddress: WETH_ADDRESS,
