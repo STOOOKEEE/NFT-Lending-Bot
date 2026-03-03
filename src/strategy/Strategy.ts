@@ -296,8 +296,8 @@ export async function analyzeCollection(
         }
 
         // ---- TYPE 2: Best Principal ----
-        // Skip for Blur (rolling loans, only one offer type makes sense)
-        if (platform.name === "blur") continue;
+        // Skip for Blur and Gondi — one offer per collection/duration avoids self-competition
+        if (platform.name === "blur" || platform.name === "gondi") continue;
 
         const type2Amount = platformConfig.roundAmount(mktOffer.bestPrincipalAmount);
         const type2Apr = Math.max(mktOffer.bestPrincipalAprDecimal - config.minSpreadBelowBest, platformConfig.minAprDecimal);
