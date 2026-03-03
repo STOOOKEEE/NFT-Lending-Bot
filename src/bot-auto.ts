@@ -20,7 +20,6 @@ import "dotenv/config";
 import { privateKeyToAccount } from "viem/accounts";
 import { PriceFetcher } from "./collectors/price-fetcher";
 import { savePriceToDb, getLatestFloorPrice } from "./utils/price-db";
-import { hasActiveOffer } from "./utils/lending-db";
 import { runStrategy, getOffersToSend } from "./strategy/Strategy";
 import { loadEnabledCollections, CollectionConfig } from "./utils/collections-loader";
 import { RiskManager, DEFAULT_RISK_LIMITS } from "./risk/RiskManager";
@@ -118,7 +117,8 @@ async function collectPrices(): Promise<void> {
       const prevFloor = lastKnownFloors.get(col.slug);
       if (prevFloor && prevFloor > 0) {
         const change = (price.floorPrice - prevFloor) / prevFloor;
-        if (Math.abs(change) >= PRICE_ALERT_THRESHOLD) {
+        const hasActiveLoan = riskManager.getActiveLoansForCollection(col.slug).length > 0;
+        if (Math.abs(change) >= PRICE_ALERT_THRESHOLD && hasActiveLoan) {
           const direction = change > 0 ? "📈" : "📉";
           const pct = (change * 100).toFixed(1);
           priceAlerts.push(
@@ -163,7 +163,7 @@ async function syncAllMarkets(): Promise<void> {
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`❌ ${platform.name} sync failed: ${msg}`);
-      await sendTelegramMessage(`<b>❌ ${platform.name.toUpperCase()} SYNC ERROR</b>\n${msg}`);
+      // Sync errors: console only, resolves next cycle
     }
     await sleep(2000);
   }
@@ -355,13 +355,8 @@ async function executeStrategy(): Promise<CycleStats> {
           continue;
         }
 
-        // Dedup check: skip if we already have an active offer for this collection/duration
-        const alreadyActive = await hasActiveOffer(offer.platform, collectionAddress || "", durationDays);
-        if (alreadyActive) {
-          log("⏭️", `[${platformName}] Skip ${t} ${offer.collection} ${durationDays}d: active offer already exists`);
-          stats.offersSkipped++;
-          continue;
-        }
+        // Dedup check disabled: offers expire naturally (30 min), no gas to cancel.
+        // Skipping caused missed cycles when old offer had seconds left.
 
         log("📤", `[${platformName}] Publishing ${t} offer for ${offer.collection}...`);
 
@@ -412,7 +407,7 @@ async function executeStrategy(): Promise<CycleStats> {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`❌ Strategy execution failed: ${msg}`);
-    await sendTelegramMessage(`<b>❌ STRATEGY ERROR</b>\n${msg}`);
+    // Strategy errors: console only
   }
 
   return stats;
@@ -441,7 +436,7 @@ async function generateRiskReport(): Promise<void> {
   const alerts = riskManager.getRiskAlerts();
   if (alerts.length > 0) {
     log("🚨", `${alerts.length} risk alerts detected`);
-    await sendTelegramMessage(`<b>🚨 RISK ALERTS</b>\n${alerts.join("\n")}`);
+    // Risk alerts: console only, accessible via /risk command
   }
 }
 
@@ -455,7 +450,7 @@ async function runCompaction(): Promise<void> {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`❌ Price history compaction failed: ${msg}`);
-    await sendTelegramMessage(`<b>❌ COMPACTION ERROR</b>\n${msg}`);
+    // Compaction errors: console only, non-critical
   }
 }
 
@@ -472,28 +467,13 @@ async function runCycle(): Promise<void> {
   await syncAllMarkets();
 
   // 2. Track loan statuses on all platforms
-  const tracking = await trackAllLoans();
+  await trackAllLoans();
 
   // 3. Check for defaults/recalls on all platforms
-  const liquidation = await checkAllLiquidations();
+  await checkAllLiquidations();
 
   // 4. Run strategy and publish offers
-  const stats = await executeStrategy();
-
-  // 5. Telegram only on errors or important events
-  const hasErrors = stats.errors > 0;
-  const hasLiquidation = liquidation.totalLiquidated > 0 || liquidation.totalRecalled > 0;
-  const hasAcceptedLoans = tracking.totalExecuted > 0;
-
-  if (hasErrors || hasLiquidation || hasAcceptedLoans) {
-    const lines: string[] = [`<b>🔄 Cycle #${cycleCount}</b>`];
-    if (stats.offersPublished > 0) lines.push(`📤 ${stats.offersPublished} offer(s) published`);
-    if (stats.errors > 0) lines.push(`❌ ${stats.errors} error(s)`);
-    if (hasAcceptedLoans) lines.push(`✅ ${tracking.totalExecuted} loan(s) accepted`);
-    if (liquidation.totalLiquidated > 0) lines.push(`⚠️ ${liquidation.totalLiquidated} loan(s) liquidated`);
-    if (liquidation.totalRecalled > 0) lines.push(`🔵 ${liquidation.totalRecalled} Blur loan(s) recalled`);
-    await sendTelegramMessage(lines.join("\n"));
-  }
+  await executeStrategy();
 
   log("✅", `Cycle #${cycleCount} completed — next in 30 min`);
 }

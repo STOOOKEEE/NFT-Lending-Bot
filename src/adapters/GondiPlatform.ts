@@ -61,11 +61,6 @@ const WETH_ABI = [
 
 const DEFAULT_EXPIRATION_MINUTES = 30;
 
-/** Origination fee: 0.5% of loan amount in USD, minimum $1 */
-function calculateOriginationFeeUsd(loanAmountUsd: number): number {
-  return Math.max(1, loanAmountUsd * 0.005);
-}
-
 // ==================== INTERNAL TYPES ====================
 
 type ViemPublicClient = ReturnType<typeof createPublicClient>;
@@ -311,7 +306,12 @@ export class GondiPlatform extends LendingPlatform {
       }
 
       const capacityWei = principalWei;
-      const maxSeniorRepayment = (principalWei * (10000n + bps * BigInt(durationDays) / 365n)) / 10000n;
+      let maxSeniorRepayment = (principalWei * (10000n + bps * BigInt(durationDays) / 365n)) / 10000n;
+      if (steps) {
+        // Round UP to next wethStep so repayment cap is not too tight
+        const rem = maxSeniorRepayment % steps.wethStep;
+        if (rem > 0n) maxSeniorRepayment += steps.wethStep - rem;
+      }
 
       // Check WETH balance
       await this.checkWethBalance(capacityWei);
@@ -319,28 +319,18 @@ export class GondiPlatform extends LendingPlatform {
       // Check and approve WETH
       await this.checkAndApproveWeth(capacityWei);
 
-      // Compute origination fee (0.5% of loan, min $1), rounded to origFeeBpsStep
-      const ethPrice = await getEthUsdPrice();
-      const loanAmountUsd = amountEth * ethPrice;
-      const feeUsd = calculateOriginationFeeUsd(loanAmountUsd);
-      let feeBps = BigInt(Math.round((feeUsd / loanAmountUsd) * 10000));
-      if (steps) {
-        feeBps = roundToStep(feeBps, steps.origFeeBpsStep);
-        if (feeBps <= 0n) feeBps = steps.origFeeBpsStep;
-      }
-      const feeWei = principalWei * feeBps / 10000n;
-
-      // Send offer
+      // Origination fee: Gondi API validates fee as BPS but the on-chain contract
+      // interprets it as WEI. The API rejects meaningful wei values with
+      // INVALID_OFFER_STEPS_ERROR. Until Gondi fixes this mismatch, fee=0.
       const roundedAmountEth = parseFloat(formatEther(principalWei));
       const roundedAprPercent = Number(bps) / 100;
-      const feeEth = parseFloat(formatEther(feeWei));
-      console.log(`  [gondi] Sending: ${slug} | ${roundedAmountEth} ETH | ${roundedAprPercent}% | ${durationDays}d | fee ${feeEth.toFixed(6)} ETH (${feeBps} bps, ~$${feeUsd.toFixed(2)}) | collectionId=${collectionId}`);
+      console.log(`  [gondi] Sending: ${slug} | ${roundedAmountEth} ETH | ${roundedAprPercent}% | ${durationDays}d | collectionId=${collectionId}`);
       const gondiOffer = await this.gondi!.makeCollectionOffer({
         collectionId,
         principalAddress: WETH_ADDRESS,
         principalAmount: principalWei,
         capacity: capacityWei,
-        fee: feeWei,
+        fee: 0n,
         aprBps: bps,
         expirationTime: getExpirationTime(DEFAULT_EXPIRATION_MINUTES),
         duration: daysToSeconds(durationDays),

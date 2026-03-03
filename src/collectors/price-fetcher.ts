@@ -8,7 +8,6 @@
  * - Horodatage
  */
 
-import { sendRateLimitAlert } from "../utils/telegram";
 import { sleep } from "../utils/helpers";
 
 // ==================== TYPES ====================
@@ -41,7 +40,6 @@ const MAX_RETRIES = 3;
 async function fetchWithRetry(
   url: string,
   headers: Record<string, string>,
-  collectionSlug?: string
 ): Promise<Response> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const response = await fetch(url, { headers });
@@ -50,11 +48,6 @@ async function fetchWithRetry(
       const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
       const totalWait = backoff + RATE_LIMIT_DELAY_MS; // backoff + respect global rate limit
       console.warn(`[OpenSea] Rate limited (429), retrying in ${totalWait / 1000}s...`);
-
-      // Envoyer alerte Telegram si c'est la première tentative
-      if (attempt === 0 && collectionSlug) {
-        await sendRateLimitAlert(collectionSlug, totalWait / 1000);
-      }
 
       await sleep(totalWait);
       continue;
@@ -80,7 +73,6 @@ async function fetchFloorPrice(
     const response = await fetchWithRetry(
       `${OPENSEA_API_BASE}/collections/${collectionSlug}/stats`,
       headers,
-      collectionSlug
     );
 
     if (!response.ok) {
@@ -128,7 +120,6 @@ async function fetchTopBid(
     const response = await fetchWithRetry(
       `${OPENSEA_API_BASE}/offers/collection/${collectionSlug}?limit=10`,
       headers,
-      collectionSlug
     );
 
     if (!response.ok) {
