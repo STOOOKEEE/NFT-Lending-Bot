@@ -188,6 +188,31 @@ export async function deleteOldExpiredOffers(daysOld: number = 30): Promise<numb
   return data?.length || 0;
 }
 
+/** Get recently expired offers (within last N hours) to catch late EXECUTED status from Gondi */
+export async function getRecentlyExpiredOffers(
+  lenderAddress: string,
+  marketplace: string,
+  withinHours: number = 2
+): Promise<LendingOffer[]> {
+  const db = getSupabaseClient();
+  const cutoff = new Date(Date.now() - withinHours * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await db
+    .from("lending_offers")
+    .select("*")
+    .eq("lender_address", lenderAddress.toLowerCase())
+    .eq("marketplace", marketplace)
+    .eq("status", "EXPIRED")
+    .gte("expiration_time", cutoff)
+    .order("expiration_time", { ascending: false });
+
+  if (error) {
+    console.error("[lending-db] getRecentlyExpiredOffers error:", error.message);
+    return [];
+  }
+  return data || [];
+}
+
 /** Check if an active (non-expired) offer already exists for this collection/duration/platform */
 export async function hasActiveOffer(
   marketplace: string,

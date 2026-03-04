@@ -111,7 +111,7 @@ function getPlatformConfig(platformName: string): PlatformConfig {
     skipViabilityCheck: false,
     roundAmount: (v: number) => v,
     minAmount: 0,
-    minAprDecimal: 0.01, // Gondi rejects < 100 bps (1%)
+    minAprDecimal: 0.05, // 5% minimum APR
   };
 }
 

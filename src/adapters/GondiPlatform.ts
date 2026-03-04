@@ -19,7 +19,7 @@ import {
   LiquidationCheckResult,
 } from "./LendingPlatform";
 import { RiskManager } from "../risk/RiskManager";
-import { addOffer, createOfferFromGondiResponse, getOffersByLender, updateOfferStatus } from "../utils/lending-db";
+import { addOffer, createOfferFromGondiResponse, getOffersByLender, getRecentlyExpiredOffers, updateOfferStatus } from "../utils/lending-db";
 import { getAllOffers as fetchGondiOffers, listOffers, OfferStatus, Offer } from "../collectors/gondi-fetcher";
 import { replaceAllOffers, getOffersByCollection, BestOfferRecord } from "../utils/gondi-db";
 import { getDurationBucket, getEthUsdPrice, toETHEquivalent } from "../utils/helpers";
@@ -365,9 +365,12 @@ export class GondiPlatform extends LendingPlatform {
     const result: TrackingResult = { checked: 0, executed: 0, cancelled: 0, expired: 0, errors: 0 };
 
     const localActiveOffers = await getOffersByLender(lenderAddress, "gondi", "ACTIVE");
-    if (localActiveOffers.length === 0) return result;
+    const recentlyExpired = await getRecentlyExpiredOffers(lenderAddress, "gondi", 2);
+    const allOffersToCheck = [...localActiveOffers, ...recentlyExpired];
 
-    result.checked = localActiveOffers.length;
+    if (allOffersToCheck.length === 0) return result;
+
+    result.checked = allOffersToCheck.length;
 
     const gondiResult = await listOffers({
       lenders: [lenderAddress.toLowerCase()],
@@ -379,7 +382,7 @@ export class GondiPlatform extends LendingPlatform {
       gondiByOfferId.set(offer.offerId, offer.status);
     }
 
-    for (const localOffer of localActiveOffers) {
+    for (const localOffer of allOffersToCheck) {
       try {
         const gondiStatus = gondiByOfferId.get(localOffer.offer_id);
 
