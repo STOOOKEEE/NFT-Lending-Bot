@@ -17,6 +17,7 @@ import {
   PlatformMarketOffer,
   TrackingResult,
   LiquidationCheckResult,
+  DetectedLoan,
 } from "./LendingPlatform";
 import { RiskManager } from "../risk/RiskManager";
 import { addOffer, createOfferFromGondiResponse, getOffersByLender, getRecentlyExpiredOffers, updateOfferStatus } from "../utils/lending-db";
@@ -634,6 +635,46 @@ export class GondiPlatform extends LendingPlatform {
     }
 
     return results;
+  }
+
+  // ==================== ACTIVE LOANS DETECTION ====================
+
+  async fetchActiveLoans(): Promise<DetectedLoan[]> {
+    this.ensureInitialized();
+
+    const walletAddr = this.walletAddress!.toLowerCase();
+    const response = await this.gondi!.loans({
+      statuses: [LoanStatusType.LoanInitiated],
+      limit: 50,
+    });
+
+    const allLoans = response.loans as unknown as GondiLoan[];
+    const ourLoans = allLoans.filter(loan =>
+      loan.source.some(s => s.lenderAddress.toLowerCase() === walletAddr)
+    );
+
+    return ourLoans.map(loan => {
+      const decimals = loan.currency.decimals;
+      const amount = Number(loan.principalAmount) / Math.pow(10, decimals);
+      const startTs = Number(loan.startTime);
+      const durationSec = Number(loan.duration);
+
+      return {
+        loanId: String(loan.loanId),
+        platform: "gondi",
+        collection: loan.nft?.collection?.name || "Unknown",
+        collectionSlug: loan.nft?.collection?.slug || "",
+        collectionAddress: loan.nftCollateralAddress || "",
+        amount,
+        currency: loan.currency.symbol,
+        aprBps: loan.blendedAprBps,
+        durationDays: Math.round(durationSec / 86400),
+        borrower: loan.borrower,
+        startTime: new Date(startTs * 1000),
+        endTime: new Date((startTs + durationSec) * 1000),
+        tokenId: String(loan.nft.tokenId),
+      };
+    });
   }
 
   /** Expose wallet address for external use (e.g., tracking) */

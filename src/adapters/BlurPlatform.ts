@@ -295,7 +295,7 @@ export class BlurPlatform extends LendingPlatform {
     };
 
     try {
-      const liens = await this.fetchActiveLoans();
+      const liens = await this.fetchBlurActiveLoans();
       if (liens.length === 0) return result;
 
       result.checked = liens.length;
@@ -418,7 +418,7 @@ export class BlurPlatform extends LendingPlatform {
     return this.cachedToken;
   }
 
-  private async fetchActiveLoans(): Promise<BlurActiveLien[]> {
+  private async fetchBlurActiveLoans(): Promise<BlurActiveLien[]> {
     const walletAddress = this.wallet!.address.toLowerCase();
 
     const res = await fetch(

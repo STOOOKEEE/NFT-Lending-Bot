@@ -36,6 +36,7 @@ const PRICE_COLLECTION_INTERVAL = 60 * 60 * 1000;
 const MAIN_CYCLE_INTERVAL = 30 * 60 * 1000;
 const RISK_REPORT_INTERVAL = 60 * 60 * 1000;
 const COMPACTION_INTERVAL = 24 * 60 * 60 * 1000;
+const LOAN_CHECK_INTERVAL = 5 * 60 * 1000;
 
 const SEND_OFFERS = process.env.SEND_OFFERS === "true";
 const TELEGRAM_ENABLED = !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID;
@@ -49,6 +50,10 @@ let cycleCount = 0;
 
 const lastKnownFloors = new Map<string, number>();
 const PRICE_ALERT_THRESHOLD = 0.10;
+
+/** Known loan IDs to detect new loans (initialized on first check) */
+const knownLoanIds = new Set<string>();
+let loanCheckInitialized = false;
 
 // ==================== HELPERS ====================
 
@@ -217,11 +222,7 @@ async function trackAllLoans(): Promise<AggregatedTracking> {
     }
   }
 
-  if (aggregated.totalExecuted > 0) {
-    await sendTelegramMessage(
-      `<b>✅ LOAN ACCEPTED</b>\n${aggregated.totalExecuted} offer(s) accepted by borrowers`
-    );
-  }
+  // Telegram notification handled by checkNewLoans() loop
 
   return aggregated;
 }
@@ -454,6 +455,61 @@ async function runCompaction(): Promise<void> {
   }
 }
 
+// ==================== LOAN MONITORING (every 5 min) ====================
+
+async function checkNewLoans(): Promise<void> {
+  for (const platform of platforms) {
+    try {
+      const activeLoans = await platform.fetchActiveLoans();
+
+      for (const loan of activeLoans) {
+        const key = `${platform.name}_${loan.loanId}`;
+        if (knownLoanIds.has(key)) continue;
+
+        knownLoanIds.add(key);
+
+        // First call = initialization, no notifications
+        if (!loanCheckInitialized) continue;
+
+        const aprPercent = (loan.aprBps / 100).toFixed(2);
+        const borrowerShort = `${loan.borrower.slice(0, 6)}...${loan.borrower.slice(-4)}`;
+
+        log("🎉", `NEW LOAN: ${loan.collection} #${loan.tokenId} | ${loan.amount.toFixed(4)} ${loan.currency} @ ${aprPercent}% | ${loan.durationDays}d`);
+
+        await sendTelegramMessage(
+          `<b>✅ LOAN ACCEPTED</b>\n` +
+          `${loan.collection} #${loan.tokenId}\n` +
+          `${loan.amount.toFixed(4)} ${loan.currency} @ ${aprPercent}%\n` +
+          `${loan.durationDays}d | ${borrowerShort}`
+        );
+
+        // Register in risk manager
+        await riskManager.registerLoan({
+          offerId: `loan_${loan.loanId}`,
+          collection: loan.collectionSlug || loan.collection,
+          collectionAddress: loan.collectionAddress,
+          loanAmount: loan.amount,
+          apr: loan.aprBps / 10000,
+          durationDays: loan.durationDays,
+          startDate: loan.startTime,
+          endDate: loan.endTime,
+          collateralFloorPrice: 0,
+          status: "active",
+          liquidationRisk: 0,
+        });
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ [${platform.name}] Loan check failed: ${msg}`);
+    }
+  }
+
+  if (!loanCheckInitialized) {
+    loanCheckInitialized = true;
+    log("🔍", `Loan monitoring initialized: ${knownLoanIds.size} active loan(s)`);
+  }
+}
+
 // ==================== MAIN CYCLE ====================
 
 async function runCycle(): Promise<void> {
@@ -592,6 +648,9 @@ async function main() {
   // Start Telegram command listener
   startTelegramCommands(riskManager);
 
+  // Initialize loan monitoring (loads existing loans, no notifications)
+  await checkNewLoans();
+
   // First price collection + first cycle
   await collectPrices();
   await sleep(3000);
@@ -600,6 +659,7 @@ async function main() {
   // Periodic timers
   setInterval(collectPrices, PRICE_COLLECTION_INTERVAL);
   setInterval(runCycle, MAIN_CYCLE_INTERVAL);
+  setInterval(checkNewLoans, LOAN_CHECK_INTERVAL);
   setInterval(generateRiskReport, RISK_REPORT_INTERVAL);
   setInterval(runCompaction, COMPACTION_INTERVAL);
 

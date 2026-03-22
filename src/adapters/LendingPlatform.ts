@@ -61,6 +61,23 @@ export interface LiquidationCheckResult {
   alerts: string[];
 }
 
+/** Prêt actif détecté sur une plateforme */
+export interface DetectedLoan {
+  loanId: string;
+  platform: string;
+  collection: string;
+  collectionSlug: string;
+  collectionAddress: string;
+  amount: number;
+  currency: string;
+  aprBps: number;
+  durationDays: number;
+  borrower: string;
+  startTime: Date;
+  endTime: Date;
+  tokenId: string;
+}
+
 // ==================== ABSTRACT CLASS ====================
 
 export abstract class LendingPlatform {
@@ -108,4 +125,12 @@ export abstract class LendingPlatform {
    * Vérifie les prêts actifs et liquide/recall si nécessaire.
    */
   abstract checkAndLiquidate(dryRun: boolean): Promise<LiquidationCheckResult>;
+
+  /**
+   * Retourne les prêts actifs où on est lender.
+   * Utilisé par la boucle de détection de nouveaux prêts.
+   */
+  async fetchActiveLoans(): Promise<DetectedLoan[]> {
+    return [];
+  }
 }
